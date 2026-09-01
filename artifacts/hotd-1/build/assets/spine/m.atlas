@@ -1,0 +1,21 @@
+
+m.webp
+size: 512, 400
+filter: Linear, Linear
+pma: false
+shoe_r
+bounds: 2, 340, 50, 57
+leg_r_lo
+bounds: 267, 2, 49, 172
+leg_r_up
+bounds: 369, 2, 66, 166
+shoe_l
+bounds: 54, 340, 49, 57
+leg_l_lo
+bounds: 318, 2, 49, 171
+leg_l_up
+bounds: 437, 2, 64, 165
+upper
+bounds: 2, 2, 263, 336
+shadow
+bounds: 105, 340, 119, 35

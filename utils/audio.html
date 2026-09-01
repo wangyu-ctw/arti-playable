@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>OpenRouter 音频生成</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#161a20; --line:#262b33; --fg:#e6e9ee; --dim:#8b93a1; --acc:#4da3ff; --ok:#7ee787; --err:#ff7b72; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header b { font-size:16px; }
+  main { max-width:860px; margin:0 auto; padding:20px; display:flex; flex-direction:column; gap:14px; }
+  .blk { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+  .hint { color:var(--dim); font-size:12px; }
+  label { font-size:13px; color:var(--dim); }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    background:#0d1014; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; }
+  textarea { width:100%; min-height:90px; resize:vertical; }
+  button { background:var(--acc); color:#04121f; border:0; border-radius:6px; padding:8px 18px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:#232936; color:var(--fg); font-weight:normal; padding:6px 12px; }
+  .thumbs { display:flex; gap:8px; flex-wrap:wrap; }
+  .thumbs .th { position:relative; width:84px; height:84px; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .thumbs img { width:100%; height:100%; object-fit:cover; display:block; }
+  .thumbs .rm { position:absolute; top:2px; right:2px; background:rgba(0,0,0,.7); color:#fff; border:0; border-radius:4px; padding:0 6px; cursor:pointer; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:10px; }
+  .card .meta { color:var(--dim); font-size:12px; margin-bottom:6px; }
+  .card audio { width:100%; margin:6px 0; }
+  .err { color:var(--err); white-space:pre-wrap; }
+  .ok { color:var(--ok); }
+  details pre { max-height:240px; overflow:auto; font-size:11px; background:#0d1014; padding:8px; border-radius:6px; }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <b>🎵 OpenRouter 音频生成</b>
+  <span class="hint">Google Lyria 3（音乐，文/图输入）· OpenAI gpt-audio（语音，文/音频输入）· key 存 localStorage</span>
+</header>
+<main>
+  <div class="blk">
+    <div class="row">
+      <label>OpenRouter Key</label>
+      <input id="key" type="password" placeholder="sk-or-v1-…" style="flex:1;min-width:260px">
+      <button class="ghost" id="keyEye">显示</button>
+      <span class="hint" id="keyMsg"></span>
+    </div>
+    <div class="row">
+      <label>模型</label>
+      <select id="model" style="min-width:320px"></select>
+      <span class="hint" id="modelHint"></span>
+    </div>
+  </div>
+
+  <div class="blk">
+    <div class="row"><label style="width:100%">提示词（Lyria = 音乐描述；gpt-audio = 对话/朗读内容）</label></div>
+    <textarea id="prompt" placeholder="例：疾走感のあるダークなシンセウェーブ、ゾンビ映画の予告編風、BPM 128…"></textarea>
+
+    <div id="fLyria">
+      <div class="row">
+        <label>参考图（可多张，随文本一起送入）</label>
+        <input id="imgFile" type="file" accept="image/*" multiple>
+      </div>
+      <div class="thumbs" id="imgThumbs"></div>
+    </div>
+
+    <div id="fOpenai">
+      <div class="row">
+        <label>声音</label>
+        <select id="voice">
+          <option>alloy</option><option>ash</option><option>ballad</option><option>coral</option>
+          <option>echo</option><option>sage</option><option>shimmer</option><option>verse</option>
+          <option>cedar</option><option>marin</option>
+        </select>
+        <label>输出格式</label>
+        <select id="afmt"><option value="pcm16">wav（流式 pcm16 封装）</option></select>
+        <label>输入音频（可选，wav/mp3）</label>
+        <input id="audFile" type="file" accept="audio/wav,audio/mpeg,.wav,.mp3">
+        <span class="hint" id="audName"></span>
+      </div>
+      <div class="row hint">gpt-audio 支持文本+音频输入（不支持图片）；输入音频可用于「听后回应/转述」类玩法</div>
+    </div>
+
+    <div class="row">
+      <label>temperature</label><input id="temp" type="number" step="0.1" min="0" max="2" style="width:80px" placeholder="默认">
+      <label>seed</label><input id="seed" type="number" style="width:120px" placeholder="随机">
+      <span class="sp" style="flex:1"></span>
+      <button id="go">生成</button>
+    </div>
+    <div class="hint" id="cost"></div>
+  </div>
+
+  <div class="blk">
+    <b>结果</b><span class="hint">（本页会话内留存，不落盘）</span>
+    <div id="out"><div class="hint">还没有生成记录。</div></div>
+  </div>
+</main>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  // key：独立 localStorage 槽位（与后续 OpenRouter 工具页共用）
+  const KEY = 'openrouter_key';
+  $('#key').value = localStorage.getItem(KEY) || '';
+  $('#key').addEventListener('change', () => { localStorage.setItem(KEY, $('#key').value.trim()); $('#keyMsg').textContent = '已保存'; setTimeout(() => $('#keyMsg').textContent = '', 1500); });
+  $('#keyEye').onclick = () => { const k = $('#key'); k.type = k.type === 'password' ? 'text' : 'password'; $('#keyEye').textContent = k.type === 'password' ? '显示' : '隐藏'; };
+
+  // 音频输出模型（打开页面时向 OpenRouter 拉最新列表，失败用内置兜底）
+  const FALLBACK = [
+    { id: 'google/lyria-3-clip-preview',  note: '音乐 · 30s 片段 · $0.04/条 · 输入 文+图' },
+    { id: 'google/lyria-3-pro-preview',   note: '音乐 · 完整歌曲 · $0.08/首 · 输入 文+图' },
+    { id: 'openai/gpt-audio',             note: '语音 · 输入 文+音频 · 音频输出 $32/M tok' },
+    { id: 'openai/gpt-audio-mini',        note: '语音 · 低价版 · 输入 文+音频' },
+  ];
+  let models = FALLBACK.slice();
+  function renderModels() {
+    const cur = $('#model').value;
+    $('#model').innerHTML = models.map(m => `<option value="${m.id}">${m.id}</option>`).join('');
+    if (models.some(m => m.id === cur)) $('#model').value = cur;
+    syncForm();
+  }
+  function syncForm() {
+    const id = $('#model').value, m = models.find(x => x.id === id) || {};
+    const isLyria = /lyria/.test(id);
+    $('#fLyria').style.display = isLyria ? '' : 'none';
+    $('#fOpenai').style.display = isLyria ? 'none' : '';
+    $('#modelHint').textContent = m.note || '';
+    $('#cost').textContent = isLyria ? '计价：clip $0.04/条，pro $0.08/首（按次）' : '计价：文本输入/输出按 token；音频输出按音频 token（gpt-audio $32/M，mini $0.6/M 输入档）';
+  }
+  $('#model').onchange = syncForm;
+  renderModels();
+  fetch('https://openrouter.ai/api/v1/models').then(r => r.json()).then(j => {
+    const audio = (j.data || []).filter(m => (m.architecture?.output_modalities || []).includes('audio'))
+      .filter(m => /^google\/|^openai\//.test(m.id))
+      .map(m => ({ id: m.id, note: (FALLBACK.find(f => f.id === m.id) || {}).note || ('输入 ' + (m.architecture.input_modalities || []).join('+')) }));
+    if (audio.length) { models = audio; renderModels(); }
+  }).catch(() => {});
+
+  // 参考图（Lyria）
+  const imgs = [];
+  const file2dataURL = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+  $('#imgFile').addEventListener('change', async e => {
+    for (const f of e.target.files) imgs.push({ name: f.name, url: await file2dataURL(f) });
+    e.target.value = ''; renderThumbs();
+  });
+  function renderThumbs() {
+    $('#imgThumbs').innerHTML = imgs.map((im, i) => `<div class="th"><img src="${im.url}" title="${im.name}"><button class="rm" data-i="${i}">✕</button></div>`).join('');
+    $('#imgThumbs').querySelectorAll('.rm').forEach(b => b.onclick = () => { imgs.splice(+b.dataset.i, 1); renderThumbs(); });
+  }
+  // 输入音频（gpt-audio）
+  let aud = null;
+  $('#audFile').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if (!f) { aud = null; $('#audName').textContent = ''; return; }
+    const url = await file2dataURL(f);
+    aud = { format: /mp3|mpeg/.test(f.type + f.name) ? 'mp3' : 'wav', data: url.split(',')[1] };
+    $('#audName').textContent = `${f.name}（${aud.format}）`;
+  });
+
+  // 裸 PCM16 → WAV（44 字节标准头）
+  function wavWrap(pcm, sampleRate, channels) {
+    const h = new ArrayBuffer(44), v = new DataView(h);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, channels, true); v.setUint32(24, sampleRate, true);
+    v.setUint32(28, sampleRate * channels * 2, true); v.setUint16(32, channels * 2, true); v.setUint16(34, 16, true);
+    w(36, 'data'); v.setUint32(40, pcm.length, true);
+    const out = new Uint8Array(44 + pcm.length); out.set(new Uint8Array(h), 0); out.set(pcm, 44);
+    return out;
+  }
+  // 生成
+  let n = 0;
+  $('#go').onclick = async () => {
+    const key = ($('#key').value || '').trim();
+    if (!key) return alert('先填 OpenRouter Key（sk-or-v1-…）');
+    const model = $('#model').value, isLyria = /lyria/.test(model);
+    const prompt = $('#prompt').value.trim();
+    if (!prompt) return alert('提示词不能为空');
+    const content = [{ type: 'text', text: prompt }];
+    if (isLyria) imgs.forEach(im => content.push({ type: 'image_url', image_url: { url: im.url } }));
+    else if (aud) content.push({ type: 'input_audio', input_audio: { data: aud.data, format: aud.format } });
+    const body = { model, modalities: ['text', 'audio'], stream: true, messages: [{ role: 'user', content }] };   // OpenRouter：音频输出必须 stream:true
+    if (!isLyria) body.audio = { voice: $('#voice').value, format: 'pcm16' };   // OpenAI 流式音频要求 pcm16，收完客户端封 WAV
+    if ($('#temp').value !== '') body.temperature = +$('#temp').value;
+    if ($('#seed').value !== '') body.seed = Math.round(+$('#seed').value);
+    const card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = `<div class="meta">#${++n} · ${model} · ${new Date().toLocaleTimeString()}</div><div class="st">生成中…</div>`;
+    const out = $('#out'); if (out.firstChild && out.firstChild.className === 'hint') out.innerHTML = '';
+    out.prepend(card);
+    $('#go').disabled = true;
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json', 'X-Title': 'arti-playable audio tool' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error((j.error && (j.error.message || JSON.stringify(j.error))) || ('HTTP ' + r.status)); }
+      // SSE 流：音频 base64 分片在 delta.audio.data，逐片解码拼接字节
+      const chunks = []; let bytes = 0, transcript = '', text = '', fmt = '', usage = null, sseErr = null, buf = '';
+      const reader = r.body.getReader(), dec = new TextDecoder();
+      const st = card.querySelector('.st');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+          let j; try { j = JSON.parse(payload); } catch (_) { continue; }
+          if (j.error) { sseErr = j.error.message || JSON.stringify(j.error); continue; }
+          if (j.usage) usage = j.usage;
+          const d = j.choices && j.choices[0] && j.choices[0].delta || {};
+          if (d.audio) {
+            if (d.audio.data) { const b = Uint8Array.from(atob(d.audio.data), ch => ch.charCodeAt(0)); chunks.push(b); bytes += b.length; st.textContent = `接收中… ${(bytes / 1024).toFixed(0)}KB`; }
+            if (d.audio.transcript) transcript += d.audio.transcript;
+            if (d.audio.format) fmt = d.audio.format;
+          }
+          if (typeof d.content === 'string') text += d.content;
+        }
+      }
+      if (sseErr && !bytes) throw new Error(sseErr);
+      let html = '';
+      if (bytes) {
+        let all = new Uint8Array(bytes); { let o = 0; for (const b of chunks) { all.set(b, o); o += b.length; } }
+        // 嗅探封装：RIFF=wav、ID3/0xFFEx=mp3、OggS=ogg；裸 PCM 则按模型参数封 WAV 头
+        const sig = String.fromCharCode(...all.slice(0, 4));
+        let ext, mime;
+        if (sig === 'RIFF') { ext = 'wav'; mime = 'audio/wav'; }
+        else if (sig.startsWith('ID3') || (all[0] === 0xff && (all[1] & 0xe0) === 0xe0)) { ext = 'mp3'; mime = 'audio/mpeg'; }
+        else if (sig === 'OggS') { ext = 'ogg'; mime = 'audio/ogg'; }
+        else { all = wavWrap(all, isLyria ? 48000 : 24000, isLyria ? 2 : 1); ext = 'wav'; mime = 'audio/wav'; }   // pcm16：OpenAI 24kHz 单声道 / Lyria 48kHz 立体声
+        const blob = new Blob([all], { type: mime });
+        const url = URL.createObjectURL(blob);
+        html += `<audio controls src="${url}"></audio><div><a href="${url}" download="audio-${n}.${ext}">下载 .${ext}</a>（${(blob.size / 1024).toFixed(0)}KB${fmt ? ' · ' + fmt : ''}）</div>`;
+        if (transcript) html += `<div class="hint">转写：${transcript}</div>`;
+      } else html += `<div class="err">流结束但没有音频数据${sseErr ? '：' + sseErr : ''}</div>`;
+      if (text) html += `<div>${text}</div>`;
+      if (usage) html += `<div class="hint">用量：${JSON.stringify(usage)}</div>`;
+      st.outerHTML = html;
+    } catch (e) {
+      card.querySelector('.st').outerHTML = `<div class="err">失败：${e.message}</div>`;
+    } finally { $('#go').disabled = false; }
+  };
+})();
+</script>
+</body>
+</html>

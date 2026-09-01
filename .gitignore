@@ -1,0 +1,24 @@
+# 依赖 / 系统文件
+node_modules/
+.DS_Store
+*.log
+
+# artifacts：只入库各项目的打包产物 build/；src（工作区）与 assets（素材源）不上传
+/artifacts/**
+!/artifacts/*/
+!/artifacts/*/build/
+!/artifacts/*/build/**
+
+# IDE / agent 本地配置与临时目录
+.idea/
+.vscode/
+.tmp/
+.agents/
+.claude/
+skills-lock.json
+
+# 白名单之后再兜底一次系统文件（后面的规则优先级更高）
+**/.DS_Store
+
+# 内部服务域名（本地配置，不入库）
+utils/artifex.host

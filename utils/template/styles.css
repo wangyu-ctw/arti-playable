@@ -1,0 +1,92 @@
+/* styles.css — 骨架样式。舞台固定 750x1334（简报 §7），按 contain 缩放居中；素材默认 object-fit: contain。 */
+:root {
+  --stage-w: 750px;
+  --stage-h: 1334px;
+  --stage-bg: #000;           /* 素材 contain 留边时露出的底色 */
+  --font: -apple-system, "PingFang SC", "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+}
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: var(--font); -webkit-tap-highlight-color: transparent; }
+#stage {
+  position: absolute; left: 50%; top: 50%;
+  width: var(--stage-w); height: var(--stage-h);
+  background: var(--stage-bg); overflow: hidden;
+  transform-origin: center center;
+  transform: translate(-50%, -50%) scale(1);   /* scale 由 player.js 按视口计算 */
+  user-select: none; touch-action: manipulation;
+}
+#stage.paused * { animation-play-state: paused !important; }
+
+/* ---- 场景层与转场 ---- */
+.scene { position: absolute; inset: 0; opacity: 0; transition: opacity .4s ease; }
+.scene.in { opacity: 1; }
+.scene.out { opacity: 0; pointer-events: none; }
+.scene.t-none { transition: none; }
+.scene.t-slide-up { transform: translateY(6%); transition: opacity .45s ease, transform .45s cubic-bezier(.2,.8,.2,1); }
+.scene.t-slide-up.in { transform: none; }
+.scene.t-zoom { transform: scale(1.06); transition: opacity .5s ease, transform .6s ease; }
+.scene.t-zoom.in { transform: none; }
+
+/* ---- 素材：默认 contain 完整放下并居中，需要铺满时加 .fit-cover ---- */
+.media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; background: transparent; }
+.media.fit-cover { object-fit: cover; }
+.media.fit-fill  { object-fit: fill; }
+
+/* ---- 通用文字 ---- */
+.txt { position: absolute; left: 6%; right: 6%; color: #fff; text-align: center; line-height: 1.35; text-shadow: 0 2px 8px rgba(0,0,0,.6); white-space: pre-wrap; }
+.txt.title { top: 12%; font-size: 64px; font-weight: 800; letter-spacing: .02em; }
+.txt.sub   { top: 24%; font-size: 34px; opacity: .9; }
+.txt.caption { bottom: 30%; font-size: 36px; font-weight: 600; }
+.typing::after { content: "▍"; animation: blink 1s steps(1) infinite; margin-left: 2px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---- 选项 ---- */
+.choices { position: absolute; left: 6%; right: 6%; bottom: 7%; display: flex; flex-direction: column; gap: 22px; }
+.choices.in { animation: rise .45s cubic-bezier(.2,.8,.2,1) both; }
+.choice {
+  appearance: none; border: 0; cursor: pointer;
+  padding: 26px 30px; border-radius: 22px; font: inherit; font-size: 36px; font-weight: 700; color: #111;
+  background: rgba(255,255,255,.94); box-shadow: 0 8px 30px rgba(0,0,0,.35);
+  transition: transform .12s ease;
+}
+.choice:active { transform: scale(.97); }
+.choice.picked { background: #ffd54a; }
+@keyframes rise { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+
+/* ---- 结局 CTA ---- */
+.cta { position: absolute; left: 10%; right: 10%; bottom: 10%; padding: 30px; border: 0; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 40px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #ff7a18, #ff2d55);
+  box-shadow: 0 10px 40px rgba(255,60,80,.45); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(1.04); } }
+
+/* ---- 占位（资源未到位时用，正式版不该残留） ---- */
+.placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.75); font-size: 30px; text-align: center; white-space: pre-wrap;
+  background: repeating-linear-gradient(45deg, #2a2a2a 0 24px, #333 24px 48px); outline: 4px dashed rgba(255,255,255,.35); outline-offset: -4px; }
+
+/* ---- 素材轨道：wrap 尺寸 = 素材原始像素，居中于舞台，姿态由 transform: translate(x,y) scale(s) 决定（player.js 管） ---- */
+.track { position: absolute; left: 50%; top: 50%; transform-origin: center center; will-change: transform; }
+.track-media { display: block; width: 100%; height: 100%; pointer-events: none; }
+.track .fx { width: 100%; height: 100%; }   /* 内部动效层：嵌套在姿态容器与素材图之间 */
+.track .quadwrap { width: 100%; height: 100%; transform-origin: 0 0; }   /* 四角变形层（matrix3d），动效链最内层 */
+/* 文字素材：<p> 含若干 span，每个 span 一行（块级），独立颜色/字体/对齐；大小由姿态 s 缩放 */
+.track-text { margin: 0; font-size: 48px; line-height: 1.3; font-weight: 700; color: #fff; font-family: var(--font); }
+.track-text span { display: block; white-space: pre-wrap; }
+.track.hidden-layer { visibility: hidden; }   /* 图层「隐藏」：仍会加载，打包前请删掉不用的图层 */
+.track.hidden-layer .track-media { visibility: hidden; }   /* 时间窗是 wrap 上的 visibility 动画，会压过上面的 class；媒体元素上的显式声明不受该动画影响，连跟随子层一起盖住 */
+/* 编辑模式（预览台）：选项/CTA 不可点，选中轨道描边 */
+#stage.editing .choices, #stage.editing .cta { pointer-events: none; }
+/* 选中框由预览台的变换框（#tbox）显示，不再画虚线描边 */
+.track[data-type="audio"] { visibility: hidden; }                         /* 音频轨运行时不可见 */
+#stage.editing .track[data-type="audio"] { visibility: visible; }         /* 编辑模式显示可选中的徽标框 */
+.audio-badge { display: none; }
+#stage.editing .audio-badge { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+  background: rgba(77,163,255,.18); border: 1px dashed rgba(77,163,255,.7); border-radius: 8px;
+  color: #cfe4ff; font: 24px/1 sans-serif; white-space: nowrap; overflow: hidden; }
+/* ---- 右上角声音开关 ---- */
+.sound-btn { position: absolute; top: 22px; right: 22px; width: 58px; height: 58px; border-radius: 50%;
+  background: rgba(255,255,255,.38); box-shadow: 0 2px 10px rgba(0,0,0,.25); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; z-index: 60; cursor: pointer; }
+.sound-btn svg { width: 58%; height: 58%; pointer-events: none; }
+.sound-btn .ic-on { display: none; }
+.sound-btn[data-on="1"] .ic-on { display: block; }
+.sound-btn[data-on="1"] .ic-off { display: none; }
+#stage.editing .sound-btn { display: none; }

@@ -1,0 +1,1178 @@
+<!doctype html>
+<!-- preview.html — 预览/调试/素材编辑台。用法：utils/serve.sh 起服务后打开 http://localhost:8080/utils/preview.html?p=<projectname>
+     预览：750x1334 舞台按比例预览 / 场景列表跳转 / 暂停 / 关闭闲置自动选 / 事件日志 / 三分网格+9:16 参考线
+           / ?s=<sceneId> 从指定场景启动 / ?edit=1 直接进编辑模式 / 其余地址栏参数原样透传给项目页。
+     编辑（✎）：素材（图层）列表：从 assets/ 添加、改名、显隐、上下移层、删除；每个素材独立关键帧（可命名）。
+           舞台上拖动=移动、滚轮=缩放；变换框四角等比/四边变形/顶柄旋转；底部 Flash 式时间轴（100ms 一刻度）：拖播放头 scrub、
+           拖关键帧改时间（后续帧跟着平移，Alt=只动这一帧）、双击空白插关键帧、从播放头开始播放；
+           播放头停在补间处直接改素材会自动在该处插关键帧。保存到 artifacts/<p>/src/tracks.js（需 utils/serve.py 的 POST /__save）。
+     依赖项目 player.js 暴露的 window.__playable（简报 §9）；没暴露也能纯预览。 -->
+<html lang="zh"><head><meta charset="utf-8"><title>Playable 预览台</title>
+<style>
+  :root { --bg:#14161a; --panel:#1d2026; --line:#2c313a; --fg:#e6e8ec; --dim:#8b93a1; --acc:#4da3ff; --warn:#ffb648; --ok:#7ee787; --red:#ff5b5b; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* 否则下面的 display:flex 会压过 hidden 属性 */
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 -apple-system,"PingFang SC",Menlo,monospace; }
+  body { display:grid; grid-template-rows:44px 1fr; grid-template-columns:300px 1fr; height:100vh; }
+  body.editing { grid-template-columns:300px 1fr 400px; grid-template-rows:44px 1fr 172px; }
+  header { grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:0 12px; background:var(--panel); border-bottom:1px solid var(--line); overflow-x:auto; scrollbar-width:none; }
+  header::-webkit-scrollbar { display:none; }
+  header > * { flex-shrink:0; }
+  .sp { flex:1 1 0; min-width:0; }
+  button, select, input { font:inherit; color:var(--fg); background:#262a32; border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
+  input[type=number] { width:78px; padding:4px 6px; cursor:text; } input[type=text] { cursor:text; padding:4px 6px; }
+  button:hover { border-color:var(--acc); } button.on { background:var(--acc); color:#000; border-color:var(--acc); }
+  button:disabled { opacity:.4; cursor:default; } button.warn { background:var(--red); border-color:var(--red); color:#fff; }
+  aside, #edit { background:var(--panel); display:flex; flex-direction:column; min-height:0; }
+  aside { grid-row:2 / -1; } #edit { grid-row:2; }
+  aside { border-right:1px solid var(--line); } #edit { border-left:1px solid var(--line); overflow:auto; }
+  h3 { margin:0; padding:8px 12px; font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; }
+  h3 button { padding:1px 8px; font-size:11px; }
+  #scenes { padding:6px; overflow:auto; max-height:40%; }
+  #scenes .sc { display:flex; gap:8px; align-items:center; padding:6px 8px; border-radius:6px; cursor:pointer; white-space:nowrap; }
+  #scenes .sc > span { overflow:hidden; text-overflow:ellipsis; } #scenes .sc .id { flex-shrink:0; font-weight:600; }
+  #scenes .sc:hover { background:#262a32; } #scenes .sc.cur { background:var(--acc); color:#000; }
+  #scenes .sc .meta { color:var(--dim); font-size:11px; margin-left:auto; } #scenes .sc.cur .meta { color:#123; }
+  #log { flex:1; overflow:auto; padding:6px 10px; font-size:12px; }
+  #log div { padding:2px 0; border-bottom:1px dashed #23272e; white-space:pre-wrap; word-break:break-all; }
+  #log .t { color:var(--dim); margin-right:6px; } #log .scene,#log .tracks { color:var(--acc); } #log .choice,#log .idle,#log .saved { color:var(--ok); } #log .error,#log .warn { color:var(--warn); }
+  #info { padding:8px 12px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); } #info a { color:var(--acc); text-decoration:none; margin-right:10px; } #info .w { color:var(--warn); }
+  main { grid-row:2; position:relative; overflow:auto; display:grid; place-items:center; padding:16px; min-width:0; min-height:0; }
+  #box { position:relative; }
+  #wrap { position:absolute; left:0; top:0; transform-origin:top left; }
+  iframe { display:block; border:0; background:#000; box-shadow:0 0 0 1px #333, 0 20px 60px rgba(0,0,0,.6); }
+  #overlay { position:absolute; inset:0; pointer-events:none; display:none; }
+  #overlay.on { display:block; }
+  #overlay .g { position:absolute; background:rgba(77,163,255,.5); }
+  #overlay .ratio { position:absolute; top:0; bottom:0; border-left:2px dashed var(--warn); border-right:2px dashed var(--warn); }
+  #overlay .lbl { position:absolute; top:6px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.6); color:var(--warn); font-size:22px; padding:4px 10px; border-radius:6px; }
+  #hit { position:absolute; inset:0; display:none; cursor:grab; touch-action:none; } #hit.on { display:block; } #hit.drag { cursor:grabbing; }
+  #tbox { position:absolute; pointer-events:none; z-index:5; }
+  #tbox .tb-frame { position:absolute; inset:0; border:calc(1.5px / var(--vs,1)) solid var(--acc); }
+  #tbox .h { position:absolute; width:calc(12px / var(--vs,1)); height:calc(12px / var(--vs,1)); background:#fff; border:calc(1.5px / var(--vs,1)) solid var(--acc); border-radius:2px; transform:translate(-50%,-50%); pointer-events:auto; touch-action:none; }
+  #tbox .h.rot { border-radius:50%; background:var(--acc); border-color:#fff; }
+  #qbox { position:absolute; inset:0; pointer-events:none; z-index:6; }
+  #qbox svg { position:absolute; inset:0; width:100%; height:100%; }
+  #qbox polygon { fill:none; stroke:var(--warn); stroke-dasharray:6 4; vector-effect:non-scaling-stroke; }
+  #qbox .qh { position:absolute; width:calc(14px / var(--vs,1)); height:calc(14px / var(--vs,1)); border-radius:50%; background:var(--warn); border:calc(1.5px / var(--vs,1)) solid #fff; transform:translate(-50%,-50%); pointer-events:auto; cursor:move; touch-action:none; }
+  #empty { color:var(--dim); text-align:center; padding:8px; }
+  /* ===== 编辑面板 ===== */
+  #edit .blk { padding:10px 12px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
+  #edit .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  #edit .hint { color:var(--dim); font-size:11px; }
+  #edit .mini { padding:1px 6px; font-size:11px; line-height:16px; }
+  /* 图层列表：上面的行 = 最上层 */
+  #trackList .tr { display:flex; gap:6px; align-items:center; padding:4px 6px; border-radius:6px; cursor:pointer; white-space:nowrap; border:1px solid transparent; }
+  #trackList .tr:hover { background:#262a32; } #trackList .tr.cur { background:rgba(77,163,255,.18); border-color:var(--acc); }
+  #trackList .tr .eye { padding:0 5px; font-size:12px; line-height:18px; } #trackList .tr .eye.off { color:var(--dim); }
+  #trackList .tr .nm { flex-shrink:0; } #trackList .tr .src { color:var(--dim); font-size:11px; overflow:hidden; text-overflow:ellipsis; }
+  #trackList .tr .meta { margin-left:auto; font-size:11px; color:var(--dim); flex-shrink:0; }
+  #trackList .tr .ops { display:flex; gap:2px; flex-shrink:0; } #trackList .tr .ops button { padding:0 5px; font-size:11px; line-height:18px; }
+  #trackList .tr input.rename { width:110px; padding:1px 4px; font-size:12px; }
+  #chooser { border:1px solid var(--line); border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:6px; background:#181b20; }
+  #chooserList { max-height:150px; overflow:auto; display:flex; flex-direction:column; gap:2px; }
+  #chooserList .ch-item { padding:3px 8px; border-radius:5px; cursor:pointer; font-size:12px; display:flex; gap:8px; } #chooserList .ch-item:hover { background:#262a32; } #chooserList .ch-item.sel { background:var(--acc); color:#000; }
+  #chooserList .ch-item .ext { margin-left:auto; color:var(--dim); font-size:11px; } #chooserList .ch-item.sel .ext { color:#123; }
+  #kfTable { width:100%; border-collapse:collapse; font-size:12px; }
+  #kfTable th { color:var(--dim); font-weight:normal; text-align:left; padding:2px 4px; }
+  #kfTable td { padding:3px 3px; border-top:1px solid var(--line); white-space:nowrap; }
+  #kfTable tr.cur td { background:rgba(77,163,255,.18); }
+  #kfTable input[type=number] { width:60px; } #kfTable input.kl { width:72px; padding:2px 4px; font-size:12px; } #kfTable select { padding:2px 2px; }
+  #kfTable button { padding:1px 6px; font-size:11px; }
+  #saveMsg { font-size:12px; color:var(--dim); } #saveMsg.ok { color:var(--ok); } #saveMsg.err { color:var(--warn); }
+  /* ===== 时间轴（Flash 式） ===== */
+  #tl { grid-row:3; grid-column:2 / -1; min-width:0; display:flex; background:var(--panel); border-top:1px solid var(--line); min-height:0; user-select:none; }
+  #tlLeft { width:210px; flex-shrink:0; border-right:1px solid var(--line); display:flex; flex-direction:column; }
+  #tlCtl { height:26px; display:flex; align-items:center; gap:4px; padding:0 6px; border-bottom:1px solid var(--line); }
+  #tlCtl button { padding:1px 7px; font-size:12px; line-height:18px; } #tlCtl button.on { background:var(--red); border-color:var(--red); color:#fff; }
+  #tlTime { margin-left:auto; font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #tlNames { flex:1; overflow:hidden; }
+  #tlNames .nm { height:26px; display:flex; align-items:center; gap:6px; padding:0 8px; border-bottom:1px solid #23272e; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #tlNames .nm:hover { background:#262a32; } #tlNames .nm.cur { color:var(--acc); font-weight:600; } #tlNames .nm.off { opacity:.45; } #tlNames .nm .meta { margin-left:auto; color:var(--dim); font-size:11px; font-weight:normal; }
+  #tlScroll { flex:1; overflow:auto; position:relative; }
+  #tlBody { position:relative; min-height:100%; cursor:crosshair; touch-action:none; }   /* 高度随内容增长：定高会让 sticky 标尺在滚过盒底时被顶走 */
+  #tlRuler { position:sticky; top:0; height:26px; background:var(--panel); border-bottom:1px solid var(--line); z-index:3; }   /* 盖住时间窗把手(z2)，被播放头(z4)盖住 */
+  #tlRuler .tick { position:absolute; bottom:0; width:1px; height:5px; background:#4a515c; }
+  #tlRuler .tick.m { height:9px; } #tlRuler .tick.l { height:14px; background:#6b7482; }
+  #tlRuler .lb { position:absolute; top:2px; transform:translateX(-50%); font-size:10px; color:var(--dim); font-variant-numeric:tabular-nums; }
+  #tlRows .rw { position:relative; height:26px; border-bottom:1px solid #23272e; background-image:repeating-linear-gradient(90deg, rgba(255,255,255,.035) 0 1px, transparent 1px 60px); }
+  #tlRows .rw.cur { background-color:rgba(77,163,255,.07); } #tlRows .rw.off { opacity:.45; }
+  #tlRows .tw { position:absolute; top:11px; height:4px; background:#3b4a63; border-radius:2px; }
+  #tlRows .win { position:absolute; top:2px; bottom:2px; background:rgba(126,231,135,.10); border:1px solid rgba(126,231,135,.35); border-left:0; border-right:0; }
+  #tlRows .hin, #tlRows .hout { position:absolute; top:2px; bottom:2px; width:6px; margin-left:-3px; background:rgba(126,231,135,.8); cursor:ew-resize; z-index:2; border-radius:2px; }
+  #tlRows .vp { position:absolute; bottom:3px; height:3px; background:rgba(126,231,135,.95); border-radius:2px; pointer-events:none; }   /* 视频实际播放段；窗口带内其后的尾巴 = 定格末帧 */
+  #tlRows .kf { position:absolute; top:7px; width:12px; height:12px; margin-left:-6px; background:#c9d1dc; transform:rotate(45deg); border:1px solid #0a0c10; cursor:ew-resize; z-index:1; }
+  #tlRows .kf:hover { background:#fff; } #tlRows .kf.sel { background:var(--acc); box-shadow:0 0 0 2px rgba(77,163,255,.45); } #tlRows .kf.drag { background:var(--warn); }
+  #tlRows .klb { position:absolute; top:5px; font-size:10px; color:var(--dim); white-space:nowrap; pointer-events:none; max-width:120px; overflow:hidden; text-overflow:ellipsis; }
+  #tlRows .kf.selr { background:var(--warn); box-shadow:0 0 0 2px rgba(255,182,72,.45); }
+  #kfTable tr.selr td { background:rgba(255,182,72,.12); }
+  #tlHead { position:absolute; top:0; bottom:0; width:0; border-left:1px solid var(--red); z-index:4; pointer-events:none; }
+  #tlHead::before { content:""; position:absolute; top:0; left:-6px; border:6px solid transparent; border-top:9px solid var(--red); border-bottom:0; }
+  #tlHint { position:absolute; left:8px; right:8px; bottom:4px; font-size:10px; color:var(--dim); pointer-events:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:right; }
+</style></head>
+<body>
+<header>
+  <b>Playable 预览台</b>
+  <select id="proj"></select>
+  <button id="reload" title="重新加载 (Shift+R)">↻ 重载</button>
+  <span class="sp"></span>
+  <button id="restart" title="回到第一个场景">⏮ 重来</button>
+  <button id="prev" title="上一场景">◀</button>
+  <button id="next" title="下一场景">▶</button>
+  <button id="pause" title="暂停/继续 (空格)">⏸ 暂停</button>
+  <button id="idle" class="on" title="闲置超时自动选：开/关">闲置自动选：开</button>
+  <button id="editBtn" title="编辑当前场景的素材">✎ 编辑</button>
+  <span class="sp"></span>
+  <select id="scale"><option value="fit">缩放：适应窗口</option><option value="1">缩放：100%</option><option value="0.5">缩放：50%</option><option value="0.75">缩放：75%</option></select>
+  <button id="ov">参考线</button>
+  <a id="open" href="#" target="_blank" style="color:var(--acc)">新窗口打开 ↗</a>
+</header>
+<aside>
+  <h3>场景 <span class="sp"></span><span id="cur" style="color:var(--fg)"></span></h3>
+  <div id="scenes"><div id="empty">等待 __playable…</div></div>
+  <h3>事件 <span class="sp"></span><button id="clear">清空</button></h3>
+  <div id="log"></div>
+  <div id="info"></div>
+</aside>
+<main>
+  <div id="box"><div id="wrap">
+    <iframe id="frame" width="750" height="1334"></iframe>
+    <div id="overlay"></div>
+    <div id="hit"></div>
+    <div id="qbox" hidden><svg><polygon points=""/></svg>
+      <div class="qh" data-c="0" title="左上角"></div><div class="qh" data-c="1" title="右上角"></div><div class="qh" data-c="2" title="右下角"></div><div class="qh" data-c="3" title="左下角"></div>
+    </div>
+    <div id="tbox" hidden><div class="tb-frame"></div>
+      <div class="h" data-k="nw" style="left:0;top:0;cursor:nwse-resize"></div><div class="h" data-k="ne" style="left:100%;top:0;cursor:nesw-resize"></div>
+      <div class="h" data-k="se" style="left:100%;top:100%;cursor:nwse-resize"></div><div class="h" data-k="sw" style="left:0;top:100%;cursor:nesw-resize"></div>
+      <div class="h" data-k="n" style="left:50%;top:0;cursor:ns-resize"></div><div class="h" data-k="s" style="left:50%;top:100%;cursor:ns-resize"></div>
+      <div class="h" data-k="e" style="left:100%;top:50%;cursor:ew-resize"></div><div class="h" data-k="w" style="left:0;top:50%;cursor:ew-resize"></div>
+      <div class="h rot" data-k="rot" style="left:50%;top:calc(-22px / var(--vs,1));cursor:grab" title="拖动旋转（Shift 吸附 15°）"></div>
+    </div>
+  </div></div>
+</main>
+<section id="edit" hidden>
+  <h3>素材编辑 · <span id="editScene" style="color:var(--fg)"></span> <span class="sp"></span><button id="trackRefresh" title="场景刚切换、素材刚加载完时点一下">刷新</button><button id="editExit">退出</button></h3>
+  <div class="blk">
+    <div class="row"><b>素材（图层）</b><span class="hint">上面的盖住下面的</span><span class="sp"></span><button id="addLayer" class="mini">＋ 添加素材</button><button id="addText" class="mini">＋ 添加文字</button><button id="addRect" class="mini">＋ 添加纯色</button><button id="addLight" class="mini">＋ 添加光效</button></div>
+    <div id="chooser" hidden>
+      <div class="row"><span class="hint">从 assets/ 选一个文件：</span><span class="sp"></span><button id="chooserClose" class="mini">关闭</button></div>
+      <div id="chooserList"><div id="empty">读取中…</div></div>
+      <div class="row">名字 <input id="chooserName" type="text" style="width:110px" placeholder="轨道名"> <label class="hint"><input id="chooserLoop" type="checkbox"> 循环（视频/Spine）</label> <button id="chooserAdd" class="mini">添加</button><span id="chooserMsg" class="hint"></span></div>
+    </div>
+    <div id="dupPanel" hidden style="border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;background:#181b20">
+      <div class="row"><span class="hint">复制轨迹：<b id="dupFrom" style="color:var(--fg)"></b> 的关键帧/时间窗/跟随/动效/变形 → 新素材</span><span class="sp"></span><button id="dupClose" class="mini">关闭</button></div>
+      <div class="row">新名字 <input id="dupName" type="text" style="width:120px"> 素材 <select id="dupSrc" style="max-width:220px"></select> <button id="dupOk" class="mini">复制</button><span id="dupMsg" class="hint"></span></div>
+    </div>
+    <div id="trackList"><div id="empty">—</div></div>
+    <div class="hint">● 显示/隐藏 · ↑↓ 移层 · ✎ 改名 · ✕ 删除（点两次）。标"代码"的是场景代码里 <code>ctx.sprite</code> 放的，只能调姿态。舞台上：<b>拖动=移动</b>，<b>滚轮=缩放</b>（以鼠标点为中心，Shift 细调）；选中框<b>四角=等比缩放</b>、<b>四边=单轴变形</b>、<b>顶部圆柄=旋转</b>（Shift 吸附 15°）。</div>
+  </div>
+  <div class="blk" id="spineEd" hidden>
+    <div class="row"><b>Spine 动作</b> <select id="spineAnimSel"></select> <label class="hint"><input id="spineLoopCk" type="checkbox"> 循环</label> 相位 <input id="spinePhase" type="number" step="50" style="width:70px" title="步伐相位偏移(ms)，可为负；循环动作按周期取模"> ms <span class="hint" id="spineDurHint"></span></div>
+  </div>
+  <div class="blk" id="textEd" hidden>
+    <div class="row"><b>文字内容</b><span class="hint">每行一个 span：颜色/字号/字体/发光强度·色/描边宽·色/对齐</span><span class="sp"></span><button id="spanAdd" class="mini">＋ 加一行</button></div>
+    <div id="spanList"></div>
+    <datalist id="fontList"><option value="system-ui"><option value="PingFang SC"><option value="Noto Sans SC"><option value="Hiragino Sans GB"><option value="serif"><option value="monospace"><option value="fantasy"></datalist>
+  </div>
+  <div class="blk">
+    <div class="row">x <input id="px" type="number" step="1"> y <input id="py" type="number" step="1"> s <input id="ps" type="number" step="0.001"> s纵 <input id="psy" type="number" step="0.001" placeholder="同s" style="width:70px"> r <input id="pr" type="number" step="1" style="width:64px">°</div>
+    <div class="row">透明度 <input id="po" type="number" min="0" max="1" step="0.05" style="width:64px"> <span id="pcWrap" hidden>颜色 <input id="pc" type="color" style="width:40px;padding:2px"></span><span class="hint">透明度/颜色都记进播放头所在关键帧，参与补间</span></div>
+    <div class="row" id="winRow">出现 <input id="winIn" type="number" step="100" min="0" style="width:80px"> ms　消失 <input id="winOut" type="number" step="100" min="0" style="width:80px" placeholder="不消失"> ms <span id="slowWrap" hidden>　慢放尾段 <input id="slowLast" type="number" step="100" min="0" style="width:70px" placeholder="0"> ms ×<input id="slowRate" type="number" step="1" min="2" style="width:56px" placeholder="30"></span> <span class="hint">时间窗外素材完全不显示（编辑时也一样；选中框仍可见便于调整）；时间轴绿带可拖两端</span></div>
+    <div class="row"><button id="fitBtn" class="mini">contain 适配</button><button id="centerBtn" class="mini">居中</button><button id="quadBtn" class="mini" title="拖四个角把矩形变成任意四边形——写进播放头所在关键帧，只在该帧生效（帧间渐变过渡）">◇ 四角变形</button><button id="quadReset" class="mini" title="清除当前帧的变形">复原变形</button><span id="poseHint" class="hint"></span></div>
+    <div class="row"><b>内部动效</b> <select id="fxType"></select> <button id="fxAdd" class="mini">＋ 添加</button><span class="hint">素材自身循环动画，叠加在关键帧运动/跟随之上</span></div>
+    <div id="fxList"></div>
+    <div class="row">跟随 <select id="followSel"></select><span class="hint">绑定后 x/y/s/r 都是父素材坐标系（x/y=父像素、s=相对父倍率），父怎么动子跟着动；切换时现有关键帧自动换算，画面不跳</span></div>
+  </div>
+  <div class="blk">
+    <div class="row"><b>关键帧</b><span class="hint" id="selInfo">当前素材</span><span class="sp"></span>t = <input id="kfT" type="number" step="100" min="0" style="width:80px"> <input id="kfName" type="text" style="width:80px" placeholder="名称(可选)"> <button id="kfAdd" class="mini" title="在播放头位置记录/更新关键帧（时间轴上双击空白处也可以）">＋ 记录</button></div>
+    <div class="row"><button id="kfCopy" class="mini" title="复制选中的一段帧 (⌘/Ctrl+C)">⧉ 复制段</button><button id="kfPaste" class="mini" title="在播放头处粘贴到当前素材轨，保持帧间距 (⌘/Ctrl+V)">📋 粘贴@播放头</button><button id="kfDelSel" class="mini" title="删除选中的帧 (Delete)">✕ 删除段</button><span class="hint">点帧=单选，Shift+点同轨另一帧=选中整段；可跨素材粘贴</span></div>
+    <table id="kfTable"></table>
+    <div class="row"><button id="kfPlay" class="mini" title="所有素材从 0 播到底">▶ 从头播放</button><button id="scenePlay" class="mini" title="把当前（未保存的）数据应用到项目页并从头播放本场景，同时退出编辑">▶ 应用并从头播本场景</button></div>
+    <div class="hint">改的是播放头所在关键帧；播放头停在补间处则自动新建。ease 写在目标帧上 = 从上一帧到该帧的过渡（首帧没有）。改 t 时后续帧一起平移（时间轴上 Alt 拖 = 只动这一帧）。</div>
+  </div>
+  <div class="blk">
+    <div class="row"><button id="save">💾 保存到 src/tracks.js</button><button id="copy">复制 JSON</button></div>
+    <span id="saveMsg"></span>
+  </div>
+</section>
+<section id="tl" hidden>
+  <div id="tlLeft">
+    <div id="tlCtl">
+      <button id="tlHome" title="播放头回到 0">⏮</button>
+      <button id="tlPlay" title="从播放头开始播放 / 停止 (空格)">▶</button>
+      <button id="tlPrev" title="上一关键帧">◆◀</button>
+      <button id="tlNext" title="下一关键帧">▶◆</button>
+      <span id="tlTime">0 ms</span>
+    </div>
+    <div id="tlNames"></div>
+  </div>
+  <div id="tlScroll">
+    <div id="tlBody">
+      <div id="tlRuler"></div>
+      <div id="tlRows"></div>
+      <div id="tlHead"></div>
+    </div>
+    <div id="tlHint">拖标尺 = 移动播放头 · 拖◆ = 改时间（后续帧跟随，Alt 只动一帧）· 双击空白 = 插关键帧 · 双击◆ = 命名 · 空格 = 从播放头播放</div>
+  </div>
+</section>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const q = new URLSearchParams(location.search);
+  let project = q.get('p') || '';
+  let stage = { w: 750, h: 1334 };
+  let api = null, unsub = null, scenesCache = [];
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const r1 = n => Math.round(n * 10) / 10, r4 = n => Math.round(n * 10000) / 10000;
+  const roundPose = p => { const o = { x: r1(p.x), y: r1(p.y), s: r4(p.s) }; const rr = r1(p.r || 0); if (Math.abs(rr) >= 0.05) o.r = rr; if (p.sy != null && Math.abs(p.sy - p.s) > 0.0001) o.sy = r4(p.sy); if (p.o != null && p.o < 0.9995) o.o = Math.round(p.o * 100) / 100; return o; };
+  const snap = t => Math.max(0, Math.round(t / 100) * 100);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // ease 到达语义：写在目标帧上 = 从上一帧到该帧的过渡；首帧无意义
+  const EASES = [['ease-in-out', '缓入缓出'], ['linear', '匀速'], ['ease-in', '缓入'], ['ease-out', '缓出'], ['ease', '标准'], ['cubic-bezier(0.34,1.56,0.64,1)', '回弹'], ['step-end', '保持后跳变']];
+  const easeOptions = cur => { const list = EASES.some(([v]) => v === cur) || !cur ? EASES : [...EASES, [cur, cur]]; return list.map(([v, lb]) => `<option value="${esc(v)}" ${(cur || 'ease-in-out') === v ? 'selected' : ''}>${lb}</option>`).join(''); };
+
+  // ---- 项目列表：解析目录页 ----
+  async function loadProjects() {
+    const sel = $('#proj'); sel.innerHTML = '';
+    try {
+      const html = await (await fetch('/artifacts/')).text();
+      const names = [...html.matchAll(/href="([^"\/]+)\/"/g)].map(m => decodeURIComponent(m[1])).filter(n => !n.startsWith('.'));
+      names.forEach(n => sel.add(new Option(n, n)));
+      if (!project && names.length) project = names[0];
+    } catch (e) { /* 非目录页服务器：退回手填 */ }
+    if (project && ![...sel.options].some(o => o.value === project)) sel.add(new Option(project, project));
+    sel.value = project;
+  }
+  $('#proj').onchange = e => { project = e.target.value; q.delete('s'); history.replaceState(null, '', `?p=${encodeURIComponent(project)}`); load(); };
+
+  // ---- 加载项目 ----
+  function load() {
+    if (edit.on) exitEdit(true);
+    disconnect();
+    const url = `/artifacts/${encodeURIComponent(project)}/src/index.html`;
+    const pass = new URLSearchParams(q); pass.delete('p'); pass.delete('edit');   // 除 p/edit 以外全部透传
+    const qs = pass.toString();
+    $('#open').href = url + (qs ? `?${qs}` : '');
+    $('#frame').src = url + `?_=${Date.now()}` + (qs ? `&${qs}` : '');
+    renderInfo();
+    log({ type: 'load', msg: url });
+  }
+  function renderInfo() {
+    $('#info').innerHTML = `舞台 <b>${stage.w}×${stage.h}</b> ${ratioNote(stage)}<br>
+      <a href="/artifacts/${project}/ASSETS.md" target="_blank">ASSETS.md</a><a href="/artifacts/${project}/NOTES.md" target="_blank">NOTES.md</a><a href="/artifacts/${project}/assets/" target="_blank">assets/</a><a href="/artifacts/${project}/src/tracks.js" target="_blank">tracks.js</a><a href="/artifacts/PLAYABLE_BRIEF.md" target="_blank">简报</a>`;
+  }
+  function ratioNote(s) { const r = s.w / s.h, ideal = 9 / 16, d = ((r / ideal - 1) * 100).toFixed(1); return Math.abs(r - ideal) < 0.002 ? '(9:16)' : `<span class="w">(比 9:16 宽 ${d}%，虚线=真 9:16 范围)</span>`; }
+
+  $('#frame').addEventListener('load', () => {
+    const win = $('#frame').contentWindow; let tries = 0;
+    const poll = () => { api = win.__playable; if (api) return connect(); if (++tries < 40) setTimeout(poll, 100); else $('#scenes').innerHTML = '<div id="empty">项目未暴露 window.__playable，仅纯预览</div>'; };
+    poll();
+  });
+  function connect() {
+    if (api.stage) { stage = api.stage; $('#frame').width = stage.w; $('#frame').height = stage.h; applyScale(); drawOverlay(); }
+    scenesCache = api.scenes; renderScenes();
+    unsub = api.subscribe(ev => {
+      log(ev);
+      if (ev.type === 'scene') { renderScenes(); if (edit.on) setTimeout(refreshTracks, 400); }
+      if (ev.type === 'pause' || ev.type === 'resume') syncPause();
+      if (ev.type === 'idleEnabled') syncIdle();
+    });
+    api.setIdleEnabled($('#idle').classList.contains('on'));
+    syncPause(); syncIdle(); renderInfo();
+    $('#editBtn').disabled = !api.tracks;
+    log({ type: 'ready', msg: `__playable v${api.version}, ${scenesCache.length} 个场景` });
+    if (q.get('edit') === '1' && api.tracks) setTimeout(enterEdit, 500);   // ?edit=1 直接进入编辑模式
+  }
+  function disconnect() { if (unsub) unsub(); unsub = null; api = null; scenesCache = []; $('#scenes').innerHTML = '<div id="empty">加载中…</div>'; $('#cur').textContent = ''; }
+
+  function renderScenes() {
+    const cur = api && api.current; $('#cur').textContent = cur || '';
+    $('#scenes').innerHTML = scenesCache.map(s => `<div class="sc ${s.id === cur ? 'cur' : ''}" data-id="${s.id}"><span class="id">${s.id}</span><span>${s.title !== s.id ? s.title : ''}</span><span class="meta">${s.isEnding ? '结局' : s.choices.length ? `→ ${s.choices.join(' | ')}` : s.next ? `→ ${s.next}` : ''}</span></div>`).join('') || '<div id="empty">没有注册任何场景</div>';
+    $('#scenes').querySelectorAll('.sc').forEach(el => el.onclick = () => gotoScene(el.dataset.id));
+  }
+  function gotoScene(id) { if (!api) return; q.set('s', id); history.replaceState(null, '', `?${q}`); api.goto(id); }
+  function step(d) { if (!api) return; const i = scenesCache.findIndex(s => s.id === api.current); const n = scenesCache[i + d]; if (n) gotoScene(n.id); }
+
+  // ---- 日志 ----
+  function log(ev) {
+    const { type, t, ...rest } = ev; const el = document.createElement('div');
+    el.innerHTML = `<span class="t">${t != null ? (t / 1000).toFixed(2) + 's' : new Date().toLocaleTimeString()}</span><span class="${type}">${type}</span> ${Object.entries(rest).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ')}`;
+    const box = $('#log'); box.appendChild(el); box.scrollTop = box.scrollHeight; while (box.children.length > 400) box.firstChild.remove();
+  }
+  $('#clear').onclick = () => $('#log').innerHTML = '';
+
+  // ---- 控制 ----
+  $('#reload').onclick = load;
+  $('#restart').onclick = () => { q.delete('s'); history.replaceState(null, '', `?${q}`); api && api.restart(); };
+  $('#prev').onclick = () => step(-1); $('#next').onclick = () => step(1);
+  $('#pause').onclick = () => api && (api.paused ? api.resume() : api.pause());
+  $('#idle').onclick = () => { const on = !$('#idle').classList.contains('on'); $('#idle').classList.toggle('on', on); $('#idle').textContent = `闲置自动选：${on ? '开' : '关'}`; api && api.setIdleEnabled(on); };
+  function syncPause() { const p = api && api.paused; $('#pause').textContent = p ? '▶ 继续' : '⏸ 暂停'; $('#pause').classList.toggle('on', !!p); }
+  function syncIdle() { if (!api) return; const on = api.idleEnabled; $('#idle').classList.toggle('on', on); $('#idle').textContent = `闲置自动选：${on ? '开' : '关'}`; }
+  document.addEventListener('keydown', e => {
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    if (e.code === 'Space') { e.preventDefault(); if (edit.on) togglePlay(); else $('#pause').click(); return; }
+    if (edit.on) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c') { copySel(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v') { pasteClip(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { if (edit.selKfs.length) { e.preventDefault(); deleteSel(); } return; }
+    }
+    if (e.key === 'R') load();
+  });
+
+  // ---- 缩放 ----
+  function applyScale() {
+    const m = $('main'), v = $('#scale').value, wrap = $('#wrap'), box = $('#box');
+    const s = v === 'fit' ? Math.min((m.clientWidth - 32) / stage.w, (m.clientHeight - 32) / stage.h) : +v;
+    wrap.style.transform = `scale(${s})`; wrap.style.width = stage.w + 'px'; wrap.style.height = stage.h + 'px'; wrap.style.setProperty('--vs', s);
+    box.style.width = `${stage.w * s}px`; box.style.height = `${stage.h * s}px`;
+  }
+  $('#scale').onchange = applyScale; window.addEventListener('resize', applyScale);
+
+  // ---- 参考线 ----
+  function drawOverlay() {
+    const o = $('#overlay'); const idealW = stage.h * 9 / 16, pad = (stage.w - idealW) / 2;
+    o.innerHTML = [1, 2].map(i => `<div class="g" style="left:${stage.w * i / 3}px;top:0;bottom:0;width:1px"></div><div class="g" style="top:${stage.h * i / 3}px;left:0;right:0;height:1px"></div>`).join('')
+      + `<div class="g" style="left:50%;top:0;bottom:0;width:1px;opacity:.35"></div><div class="g" style="top:50%;left:0;right:0;height:1px;opacity:.35"></div>`
+      + (pad > 0.5 ? `<div class="ratio" style="left:${pad}px;right:${pad}px"></div><div class="lbl">真 9:16 = ${Math.round(idealW)}×${stage.h}（两侧各 ${pad.toFixed(0)}px 在真 9:16 外）</div>` : '');
+  }
+  $('#ov').onclick = () => { $('#overlay').classList.toggle('on'); $('#ov').classList.toggle('on'); };
+
+  // ================= 编辑模式 =================
+  // 数据：edit.data[scene] = { layers:[{name,src,loop,hidden}], keys:{ name:[{t,x,y,s,ease,label}] } }（工作副本，保存才写盘）
+  // 播放头 time；改姿态作用于当前素材在播放头处的关键帧（没有则新建）
+  const edit = { on: false, data: null, scene: null, track: null, tracks: [], time: 0, dirty: false, playing: false, delArmed: null };
+  const normScene = d => !d ? { layers: [], keys: {} } : (Array.isArray(d.layers) || d.keys) ? { layers: d.layers || [], keys: d.keys || {} } : { layers: [], keys: d };
+  const sd = () => edit.data[edit.scene];
+  const kfsOf = name => (edit.data && edit.scene && sd().keys[name]) || null;
+  const curKfs = () => edit.track ? kfsOf(edit.track) : null;
+  const kfIndexAt = (kfs, t) => kfs ? kfs.findIndex(k => k.t === t) : -1;
+  const lastT = kfs => kfs && kfs.length ? kfs[kfs.length - 1].t : 0;
+  const sceneEnd = () => Math.max(0,
+    ...edit.tracks.map(t => lastT(kfsOf(t.name))),
+    ...edit.tracks.map(t => { const L = layerOf(t.name); return L ? Math.max(L.in || 0, L.out || 0) : 0; }),
+    ...edit.tracks.map(t => {   // 视频的播放段也算进场景末端：含慢放尾段（设了 out 则以 out 截断）
+      if (!t.video || !t.dur) return 0;
+      const L = layerOf(t.name);
+      return L && L.out != null ? L.out : videoPlayEnd(t);
+    }));
+  const trackInfo = (name = edit.track) => edit.tracks.find(t => t.name === name);
+  const layerOf = name => sd() && sd().layers.find(l => l.name === name);
+  const winOf = name => { const L = layerOf(name); return L && ((L.in || 0) > 0 || L.out != null) ? { in: L.in || 0, out: L.out } : null; };
+  const outsideWin = (name, t) => { const L = layerOf(name); if (!L) return false; return t < (L.in || 0) || (L.out != null && t >= L.out); };
+  const slowOf = name => { const L = layerOf(name); return L && L.slow ? { last: L.slow.last || 300, rate: L.slow.rate || 30 } : null; };
+  /** 时间轴时刻 → 视频内容毫秒（含慢放尾段映射） */
+  function videoContentMs(name, tMs, durMs) {
+    const L = layerOf(name), inT = (L && L.in) || 0, sl = slowOf(name);
+    if (!sl || !durMs) return tMs - inT;
+    const boundary = inT + Math.max(0, durMs - sl.last);
+    if (tMs <= boundary) return tMs - inT;
+    return (durMs - sl.last) + (tMs - boundary) / sl.rate;
+  }
+  /** 视频播完（含慢放拉长）的时间轴时刻 */
+  const videoPlayEnd = tr => { const L = layerOf(tr.name), inT = (L && L.in) || 0, sl = slowOf(tr.name); return inT + tr.dur + (sl ? sl.last * (sl.rate - 1) : 0); };
+  const topFirst = () => [...edit.tracks].reverse();      // 显示顺序：最上层在最前
+  const validName = n => /^[\w一-龥-]+$/.test(n);
+
+  $('#editBtn').onclick = () => edit.on ? exitEdit() : enterEdit();
+  $('#editExit').onclick = () => exitEdit();
+  $('#trackRefresh').onclick = () => refreshTracks();
+
+  function enterEdit() {
+    if (!api || !api.tracks) return;
+    edit.on = true; document.body.classList.add('editing'); $('#edit').hidden = false; $('#tl').hidden = false; $('#editBtn').classList.add('on'); $('#hit').classList.add('on');
+    api.pause(); api.setIdleEnabled(false); api.setEditing(true);
+    edit.data = clone(api.tracksData); Object.keys(edit.data).forEach(k => edit.data[k] = normScene(edit.data[k]));
+    edit.dirty = false; edit.time = 0; setSaveMsg(''); $('#chooser').hidden = true;
+    edit.diskSnap = null;   // 进入编辑时磁盘上 tracks.js 的快照：保存前对比，防止覆盖外部（agent）修改
+    fetch(`/artifacts/${encodeURIComponent(project)}/src/tracks.js?_=${Date.now()}`).then(r => r.ok ? r.text() : null).then(t => { edit.diskSnap = t; }).catch(() => {});
+    refreshTracks(); applyScale(); requestAnimationFrame(applyScale);
+  }
+  function exitEditTbox() { tbox.hidden = true; $('#qbox').hidden = true; edit.quadMode = false; $('#quadBtn') && $('#quadBtn').classList.remove('on'); }
+  function exitEdit(silent) {
+    if (edit.on && edit.dirty && !silent && !confirm('有未保存的修改，仍然退出？（修改会留在本次预览里，刷新后丢失）')) return;
+    stopPlay();
+    edit.on = false; exitEditTbox(); document.body.classList.remove('editing'); $('#edit').hidden = true; $('#tl').hidden = true; $('#editBtn').classList.remove('on'); $('#hit').classList.remove('on', 'drag');
+    if (api) { api.setEditing(false); if (edit.data) api.setTracksData(edit.data); }
+    applyScale(); requestAnimationFrame(applyScale);
+  }
+  function refreshTracks() {
+    if (!edit.on || !api) return;
+    stopPlay();
+    edit.scene = api.current; $('#editScene').textContent = edit.scene || '';
+    edit.tracks = api.tracks();
+    edit.data[edit.scene] = normScene(edit.data[edit.scene]);
+    const d = sd();
+    edit.tracks.forEach(t => {
+      t.fromData = d.layers.some(l => l.name === t.name);   // 以编辑器工作副本为准（api 里的是 iframe 的旧数据）
+      if (!d.keys[t.name] || !d.keys[t.name].length) d.keys[t.name] = [{ t: 0, ...roundPose(t.pose), label: '' }]; d.keys[t.name].sort((a, b) => a.t - b.t);
+    });
+    if (!edit.tracks.length) { edit.track = null; renderAll(); return; }
+    selectTrack(trackInfo() ? edit.track : topFirst()[0].name, true);
+  }
+  function selectTrack(name, keepTime) {
+    if (edit.selTrack && edit.selTrack !== name) { edit.selTrack = null; edit.selKfs = []; }   // 换轨清段选（剪贴板保留，可跨轨粘贴）
+    edit.track = name; api.selectTrack(name);
+    applyFxLive();   // 选中即重建其内部动效（编辑模式下让它当场循环起来，便于调参）
+    if (!keepTime) { const kfs = curKfs(); if (kfs && kfIndexAt(kfs, edit.time) < 0 && kfs.length === 1) edit.time = kfs[0].t; }
+    setTime(edit.time);
+  }
+  /** 移动播放头：所有素材定格到该时刻（≥2 帧的 scrub，单帧的摆到该姿态） */
+  function setTime(t) {
+    edit.time = snap(t);
+    edit.tracks.forEach(tr => { const kfs = kfsOf(tr.name); if (!kfs) return; if (kfs.length >= 2) api.scrub(tr.name, kfs, edit.time); else { api.setPose(tr.name, kfs[0]); api.setQuad(tr.name, effectiveQuad(tr.name, edit.time)); } api.dimTrack(tr.name, outsideWin(tr.name, edit.time));
+      if ((tr.video || tr.audio) && !edit.playing) { api.pauseVideo(tr.name); api.seekVideo(tr.name, videoContentMs(tr.name, edit.time, tr.dur) / 1000); }
+      if (tr.spine && !edit.playing) api.seekSpine(tr.name, spineContentMs(tr.name, edit.time)); });
+    renderAll();
+  }
+  function renderAll() { renderLayers(); renderTextEd(); renderSpineEd(); renderFx(); renderFollow(); renderPose(); renderKf(); renderTimeline(); renderSelInfo(); $('#kfT').value = edit.time; $('#tlTime').textContent = `${edit.time} ms`; }
+
+  // ---- 图层列表 ----
+  function renderLayers() {
+    const list = $('#trackList');
+    if (!edit.tracks.length) { list.innerHTML = '<div id="empty">本场景没有素材。点「＋ 添加素材」从 assets/ 里加一个。</div>'; return; }
+    list.innerHTML = topFirst().map(t => `<div class="tr ${t.name === edit.track ? 'cur' : ''}" data-name="${esc(t.name)}">
+      <button class="eye ${t.hidden ? 'off' : ''}" title="显示/隐藏">${t.hidden ? '○' : '●'}</button>
+      <b class="nm">${esc(t.name)}</b><span class="src">${t.type === 'text' ? '[文字]' : t.type === 'rect' ? '[纯色]' : t.type === 'light' ? '[光效]' : (t.type === 'spine' ? '[Spine] ' : t.type === 'audio' ? '[音频] ' : '') + esc((t.src || '').split('/').pop())}</span>
+      <span class="meta">${t.w}×${t.h}${t.follow ? ' ↳' + esc(t.follow) : ''}${t.fromData ? '' : ' · 代码'}</span>
+      <span class="ops"><button class="up" title="上移一层（跟随层=同组内）" ${t.fromData ? '' : 'disabled'}>↑</button><button class="dn" title="下移一层（跟随层=同组内）" ${t.fromData ? '' : 'disabled'}>↓</button><button class="dup" title="复制轨迹（可换素材）" ${t.fromData ? '' : 'disabled'}>⧉</button><button class="rn" title="改名">✎</button><button class="del ${edit.delArmed === t.name ? 'warn' : ''}" title="删除（点两次）" ${t.fromData ? '' : 'disabled'}>${edit.delArmed === t.name ? '确认?' : '✕'}</button></span></div>`).join('');
+    list.querySelectorAll('.tr').forEach(row => {
+      const name = row.dataset.name;
+      row.onclick = e => { if (e.target.closest('button,input')) return; selectTrack(name, true); };
+      row.querySelector('.eye').onclick = () => toggleHidden(name);
+      row.querySelector('.up').onclick = () => moveLayer(name, +1);
+      row.querySelector('.dn').onclick = () => moveLayer(name, -1);
+      row.querySelector('.dup').onclick = () => showDup(name);
+      row.querySelector('.rn').onclick = () => startRename(row, name);
+      row.querySelector('.del').onclick = () => deleteLayer(name);
+    });
+  }
+  function toggleHidden(name) { const t = trackInfo(name); if (!t) return; const L = sd().layers.find(l => l.name === name); const hidden = !t.hidden; if (L) { L.hidden = hidden || undefined; edit.dirty = true; } api.setLayerHidden(name, hidden); t.hidden = hidden; renderLayers(); renderTimeline(); }
+  function moveLayer(name, dir) {   // dir +1 = 往上（盖住更多），-1 = 往下；只在同一跟随组内移动（根层 = follow 为空的组）
+    const L = sd().layers, i = L.findIndex(l => l.name === name);
+    if (i < 0) return;
+    const grp = L[i].follow || null;
+    let j = i + dir;
+    while (j >= 0 && j < L.length && (L[j].follow || null) !== grp) j += dir;   // 跳过其他组，找最近同组邻居
+    if (j < 0 || j >= L.length) return;
+    [L[i], L[j]] = [L[j], L[i]]; edit.dirty = true;
+    api.reorderLayers(L.map(l => l.name)); refreshTracks();
+  }
+  function startRename(row, name) {
+    const nm = row.querySelector('.nm'); const inp = document.createElement('input'); inp.className = 'rename'; inp.type = 'text'; inp.value = name;
+    nm.replaceWith(inp); inp.focus(); inp.select();
+    let done = false;
+    const finish = ok => { if (done) return; done = true; const v = inp.value.trim(); if (ok && v && v !== name) { if (!validName(v)) return setSaveMsg('名字只能用字母、数字、下划线、中划线、中文', 'err'), renderLayers(); if (edit.tracks.some(t => t.name === v)) return setSaveMsg(`名字已存在：${v}`, 'err'), renderLayers(); renameLayer(name, v); } else renderLayers(); };
+    inp.onkeydown = e => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); };
+    inp.onblur = () => finish(true);
+  }
+  function renameLayer(from, to) {
+    const d = sd(); const L = d.layers.find(l => l.name === from); if (L) L.name = to;
+    if (d.keys[from]) { d.keys[to] = d.keys[from]; delete d.keys[from]; }
+    api.renameLayer(from, to); if (edit.track === from) edit.track = to; edit.dirty = true; refreshTracks();
+  }
+  function deleteLayer(name) {
+    if (edit.delArmed !== name) { edit.delArmed = name; renderLayers(); clearTimeout(deleteLayer._t); deleteLayer._t = setTimeout(() => { edit.delArmed = null; renderLayers(); }, 3000); return; }
+    edit.delArmed = null; const d = sd();
+    d.layers = d.layers.filter(l => l.name !== name); delete d.keys[name];
+    api.removeLayer(name); if (edit.track === name) edit.track = null; edit.dirty = true; refreshTracks();
+  }
+  // 添加素材：从 assets/ 目录选文件
+  const MEDIA_EXT = /\.(png|jpe?g|webp|gif|svg|avif|mp4|webm|mov|m4v|mp3|m4a|aac|wav|ogg)$/i;
+  const SPINE_EXT = /\.(json|skel)$/i;
+  /** assets/ 顶层媒体文件 + assets/spine/ 里的骨架文件（列为 spine/xx.json） */
+  async function listAssets() {
+    const html = await (await fetch(`/artifacts/${encodeURIComponent(project)}/assets/`)).text();
+    const files = [...html.matchAll(/href="([^"]+)"/g)].map(m => decodeURIComponent(m[1])).filter(f => !f.endsWith('/') && MEDIA_EXT.test(f));
+    try {
+      const sp = await fetch(`/artifacts/${encodeURIComponent(project)}/assets/spine/`);
+      if (sp.ok) [...(await sp.text()).matchAll(/href="([^"]+)"/g)].map(m => decodeURIComponent(m[1]))
+        .filter(f => !f.endsWith('/') && SPINE_EXT.test(f)).forEach(f => files.push(`spine/${f}`));
+    } catch (e) { /* 没有 spine 目录就算了 */ }
+    return files;
+  }
+  let chooserFile = null;
+  $('#addLayer').onclick = async () => {
+    const ch = $('#chooser'); ch.hidden = !ch.hidden; if (ch.hidden) return;
+    chooserFile = null; $('#chooserName').value = ''; $('#chooserMsg').textContent = ''; $('#chooserList').innerHTML = '<div id="empty">读取中…</div>';
+    try {
+      const files = await listAssets();
+      $('#chooserList').innerHTML = files.length ? files.map(f => `<div class="ch-item" data-file="${esc(f)}"><span>${esc(f)}</span><span class="ext">${SPINE_EXT.test(f) ? 'spine' : f.split('.').pop().toLowerCase()}</span></div>`).join('') : '<div id="empty">assets/ 里没有图片或视频</div>';
+      $('#chooserList').querySelectorAll('.ch-item').forEach(el => el.onclick = () => {
+        $('#chooserList').querySelectorAll('.ch-item').forEach(x => x.classList.toggle('sel', x === el));
+        chooserFile = el.dataset.file;
+        let base = chooserFile.replace(/\.[^.]+$/, '').replace(/[^\w一-龥-]/g, '_') || 'layer', nm = base, n = 2;
+        while (edit.tracks.some(t => t.name === nm)) nm = `${base}_${n++}`;
+        $('#chooserName').value = nm;
+      });
+    } catch (e) { $('#chooserList').innerHTML = `<div id="empty">读取 assets/ 失败：${esc(e.message)}</div>`; }
+  };
+  $('#chooserClose').onclick = () => $('#chooser').hidden = true;
+  // ---- 复制轨迹（可换素材） ----
+  function uniqueName(base) { let nm = base, n = 2; while (edit.tracks.some(t => t.name === nm)) nm = `${base}_${n++}`; return nm; }
+  async function showDup(name) {
+    const L = layerOf(name); if (!L) return;
+    edit.dupFrom = name;
+    $('#dupPanel').hidden = false; $('#dupFrom').textContent = name; $('#dupMsg').textContent = '';
+    $('#dupName').value = uniqueName(name);
+    const sel = $('#dupSrc');
+    if (L.type === 'text') { sel.innerHTML = '<option value="">（文字层：复制文字内容）</option>'; sel.disabled = true; return; }
+    if (L.type === 'spine') { sel.innerHTML = '<option value="">（Spine 层：同原骨架）</option>'; sel.disabled = true; return; }
+    sel.disabled = false; sel.innerHTML = '<option value="">同原素材</option>';
+    try {
+      const html = await (await fetch(`/artifacts/${encodeURIComponent(project)}/assets/`)).text();
+      [...html.matchAll(/href="([^"]+)"/g)].map(m => decodeURIComponent(m[1])).filter(f => !f.endsWith('/') && MEDIA_EXT.test(f))
+        .forEach(f => sel.add(new Option(f, `../assets/${f}`)));
+    } catch (e) { /* 列表拿不到就只能同素材 */ }
+  }
+  $('#dupClose').onclick = () => $('#dupPanel').hidden = true;
+  $('#dupOk').onclick = async () => {
+    const from = edit.dupFrom, L0 = layerOf(from); if (!L0) return;
+    const name = $('#dupName').value.trim(), msg = $('#dupMsg');
+    if (!validName(name)) return msg.textContent = '名字只能用字母、数字、下划线、中划线、中文';
+    if (edit.tracks.some(t => t.name === name)) return msg.textContent = `名字已存在：${name}`;
+    const NL = JSON.parse(JSON.stringify(L0)); NL.name = name;
+    const src = $('#dupSrc').value; if (src && NL.type !== 'text') NL.src = src;
+    msg.textContent = '挂载中…';
+    const info = await api.addLayer({ name, src: NL.src, loop: NL.loop, hidden: NL.hidden, type: NL.type, spans: NL.spans });
+    if (!info) return msg.textContent = '挂载失败（场景未就绪？）';
+    if (NL.fx && NL.fx.length) api.setFx(name, NL.fx);
+    if (NL.quad) api.setQuad(name, NL.quad);
+    if (NL.follow) api.setFollow(name, NL.follow);
+    const d = sd(); d.layers.push(NL); d.keys[name] = JSON.parse(JSON.stringify(d.keys[from] || []));
+    edit.track = name; edit.dirty = true; $('#dupPanel').hidden = true;
+    refreshTracks();
+    setSaveMsg(`已复制 ${from} → ${name}${src ? '（素材已更换）' : ''}`, 'ok');
+  };
+
+  // ---- 文字素材 ----
+  $('#addText').onclick = async () => {
+    if (!edit.on || !sd()) return;
+    let base = 'text', nm = base, n = 2; while (edit.tracks.some(t => t.name === nm)) nm = `${base}_${n++}`;
+    const L = { name: nm, type: 'text', spans: [{ text: '新文字', color: '#ffffff', font: '', align: 'center' }] };
+    if (edit.time > 0) L.in = edit.time;
+    const info = await api.addLayer(L);
+    if (!info) return setSaveMsg('添加失败（场景未就绪？）', 'err');
+    const d = sd(); d.layers.push(L); d.keys[nm] = [{ t: edit.time, x: 0, y: 0, s: 1, label: '' }];
+    edit.track = nm; edit.dirty = true; refreshTracks();
+  };
+  $('#addRect').onclick = async () => {
+    if (!edit.on || !sd()) return;
+    let base = 'rect', nm = base + '_1', n = 2; while (edit.tracks.some(t => t.name === nm)) nm = `${base}_${n++}`;
+    const L = { name: nm, type: 'rect', color: '#000000' };
+    if (edit.time > 0) L.in = edit.time;
+    const info = await api.addLayer(L);
+    if (!info) return setSaveMsg('添加失败（场景未就绪？）', 'err');
+    const d = sd(); d.layers.push(L); d.keys[nm] = [{ t: edit.time, x: 0, y: 0, s: 1, label: '' }];
+    edit.track = nm; edit.dirty = true; refreshTracks();
+  };
+  $('#addLight').onclick = async () => {
+    if (!edit.on || !sd()) return;
+    let base = 'light', nm = base, n = 2; while (edit.tracks.some(t => t.name === nm)) nm = `${base}_${n++}`;
+    const L = { name: nm, type: 'light' };   // 手电筒/渐晕：拖动=光心位置，缩放=光斑大小，纵向缩放=椭圆比；inner/edge/color 在 tracks.js 里调
+    if (edit.time > 0) L.in = edit.time;
+    const info = await api.addLayer(L);
+    if (!info) return setSaveMsg('添加失败（场景未就绪？）', 'err');
+    const d = sd(); d.layers.push(L); d.keys[nm] = [{ t: edit.time, x: 0, y: 0, s: 1, label: '' }];
+    edit.track = nm; edit.dirty = true; refreshTracks();
+  };
+  function applyTextLive() {
+    const L = layerOf(edit.track); if (!L || L.type !== 'text') return;
+    const info = api.setText(edit.track, L.spans);
+    const t = trackInfo(); if (t && info) { t.w = info.w; t.h = info.h; t.fit = info.fit; }
+    edit.dirty = true; renderLayers(); renderPose(true);
+  }
+  function renderTextEd() {
+    const L = layerOf(edit.track), isText = L && L.type === 'text';
+    $('#textEd').hidden = !isText;
+    if (!isText) return;
+    L.spans = L.spans || [];
+    $('#spanList').innerHTML = L.spans.map((sp, i) => `<div class="row" data-i="${i}">
+      <input class="sp-text" data-i="${i}" type="text" value="${esc(sp.text || '')}" style="flex:2;min-width:120px" placeholder="文字">
+      <input class="sp-color" data-i="${i}" type="color" value="${esc(sp.color || '#ffffff')}" title="颜色" style="width:36px;padding:2px">
+      <input class="sp-size" data-i="${i}" type="number" min="1" step="1" value="${sp.size || ''}" placeholder="48" title="字号(px)" style="width:56px">
+      <input class="sp-font" data-i="${i}" type="text" list="fontList" value="${esc(sp.font || '')}" placeholder="字体(默认)" style="width:100px">
+      <input class="sp-glow" data-i="${i}" type="number" min="0" step="1" value="${sp.glow || ''}" placeholder="0" title="外发光强度(px)，0=无" style="width:52px">
+      <input class="sp-glowc" data-i="${i}" type="color" value="${esc(sp.glowColor || sp.color || '#ffffff')}" title="外发光颜色" style="width:36px;padding:2px">
+      <input class="sp-stroke" data-i="${i}" type="number" min="0" step="0.5" value="${sp.stroke || ''}" placeholder="0" title="描边宽度(px)，0=无" style="width:52px">
+      <input class="sp-strokec" data-i="${i}" type="color" value="${esc(sp.strokeColor || '#000000')}" title="描边颜色" style="width:36px;padding:2px">
+      <select class="sp-align" data-i="${i}" title="对齐">${['left', 'center', 'right'].map(a => `<option value="${a}" ${(sp.align || 'center') === a ? 'selected' : ''}>${{ left: '左', center: '中', right: '右' }[a]}</option>`).join('')}</select>
+      <button class="sp-del mini" data-i="${i}" ${L.spans.length < 2 ? 'disabled' : ''}>✕</button></div>`).join('');
+    const bind = (cls, key, ev = 'change') => $('#spanList').querySelectorAll(cls).forEach(el => el.addEventListener(ev, () => { L.spans[+el.dataset.i][key] = el.value; applyTextLive(); }));
+    bind('.sp-text', 'text'); bind('.sp-color', 'color', 'input'); bind('.sp-font', 'font'); bind('.sp-align', 'align'); bind('.sp-glowc', 'glowColor', 'input'); bind('.sp-strokec', 'strokeColor', 'input');
+    const bindNum = (cls, key) => $('#spanList').querySelectorAll(cls).forEach(el => el.addEventListener('change', () => { const v = +el.value; const sp = L.spans[+el.dataset.i]; if (v > 0) sp[key] = v; else delete sp[key]; applyTextLive(); }));
+    bindNum('.sp-size', 'size'); bindNum('.sp-glow', 'glow'); bindNum('.sp-stroke', 'stroke');
+    $('#spanList').querySelectorAll('.sp-del').forEach(b => b.onclick = () => { L.spans.splice(+b.dataset.i, 1); applyTextLive(); renderTextEd(); });
+  }
+  $('#spanAdd').onclick = () => { const L = layerOf(edit.track); if (!L || L.type !== 'text') return; (L.spans = L.spans || []).push({ text: '新文字', color: '#ffffff', font: '', align: 'center' }); applyTextLive(); renderTextEd(); };
+
+  // ---- Spine 动作 ----
+  /** Spine 内容时间 = 场景时间 − in + phase（都取编辑中的工作副本） */
+  const spineContentMs = (name, t) => { const L = layerOf(name) || {}; return t - (L.in || 0) + (L.phase || 0); };
+  function renderSpineEd() {
+    const L = layerOf(edit.track), tr = trackInfo();
+    const isSp = !!(L && L.type === 'spine' && tr && tr.spine);
+    $('#spineEd').hidden = !isSp;
+    if (!isSp) return;
+    const cur = L.anim || tr.spineAnim;
+    $('#spineAnimSel').innerHTML = (tr.spineAnims || []).map(a => `<option value="${esc(a.name)}" ${a.name === cur ? 'selected' : ''}>${esc(a.name)}（${a.dur}ms）</option>`).join('');
+    $('#spineLoopCk').checked = L.loop !== false;
+    $('#spinePhase').value = L.phase || 0;
+    $('#spineDurHint').textContent = tr.dur ? `当前动作 ${tr.dur}ms${L.loop === false ? '，播完定格' : '，循环'}` : '';
+  }
+  const applySpine = () => {
+    const L = layerOf(edit.track); if (!L || L.type !== 'spine') return;
+    L.anim = $('#spineAnimSel').value; L.loop = $('#spineLoopCk').checked;
+    const ph = Math.round(+$('#spinePhase').value || 0); if (ph) L.phase = ph; else delete L.phase;
+    const r = api.setSpineAnim(edit.track, L.anim, L.loop);
+    const tr = trackInfo(); if (tr && r) { tr.spineAnim = L.anim; tr.spineLoop = L.loop; tr.dur = r.dur; }
+    edit.dirty = true; api.seekSpine(edit.track, spineContentMs(edit.track, edit.time)); renderSpineEd(); renderTimeline();
+  };
+  $('#spineAnimSel').onchange = applySpine; $('#spineLoopCk').onchange = applySpine; $('#spinePhase').onchange = applySpine;
+  $('#chooserAdd').onclick = async () => {
+    const name = $('#chooserName').value.trim(), msg = $('#chooserMsg');
+    if (!chooserFile) return msg.textContent = '先选一个文件';
+    if (!validName(name)) return msg.textContent = '名字只能用字母、数字、下划线、中划线、中文';
+    if (edit.tracks.some(t => t.name === name)) return msg.textContent = `名字已存在：${name}`;
+    msg.textContent = '加载中…';
+    const L = { name, src: `../assets/${chooserFile}` }; if ($('#chooserLoop').checked) L.loop = true;
+    if (SPINE_EXT.test(chooserFile)) { L.type = 'spine'; L.loop = $('#chooserLoop').checked; }   // Spine 的循环要显式写 true/false
+    if (edit.time > 0) L.in = edit.time;                        // 默认从播放头时刻出现
+    const info = await api.addLayer(L);
+    if (!info) return msg.textContent = '添加失败（场景未就绪？）';
+    if (L.type === 'spine') { if (!info.spineAnim) return msg.textContent = 'Spine 加载失败（看事件面板告警）'; L.anim = info.spineAnim; }
+    if (info.dur && !L.loop) L.out = (L.in || 0) + info.dur;   // 视频/非循环 Spine 默认消失时间 = 播放完毕（循环除外）
+    const d = sd(); d.layers.push(L); d.keys[name] = [{ t: edit.time, x: 0, y: 0, s: r4(info.fit), label: '' }];
+    edit.track = name; edit.dirty = true; $('#chooser').hidden = true;
+    refreshTracks();
+  };
+
+  // ---- 姿态 ----
+  /** 播放头处若无关键帧则以当前（补间）姿态新建一个；返回其下标 */
+  function ensureKfAtTime(label) {
+    const kfs = curKfs(); if (!kfs) return -1;
+    let i = kfIndexAt(kfs, edit.time);
+    if (i < 0) { kfs.push({ t: edit.time, ...roundPose(api.getPose(edit.track)), label: label || '' }); kfs.sort((a, b) => a.t - b.t); edit.dirty = true; i = kfIndexAt(kfs, edit.time); if (i > 0 && !kfs[i].ease) kfs[i].ease = 'ease-in-out'; else if (i === 0) delete kfs[i].ease; }
+    else if (label) { kfs[i].label = label; edit.dirty = true; }
+    return i;
+  }
+  function updatePose(p, fromInput) {
+    const kfs = curKfs(); if (!kfs) return;
+    const i = ensureKfAtTime();
+    const rp = roundPose(p);
+    Object.assign(kfs[i], rp); if (rp.r == null) delete kfs[i].r; if (rp.sy == null) delete kfs[i].sy; if (rp.o == null) delete kfs[i].o;   // 归零/等比/不透明时清掉字段
+    api.setPose(edit.track, kfs[i]); edit.dirty = true;
+    api.dimTrack(edit.track, outsideWin(edit.track, edit.time));   // setPose 会清掉隐藏态，窗外的保持不显示
+    renderPose(fromInput); renderKf(); renderTimeline();
+  }
+  function renderPose(skipInputs) {
+    const kfs = curKfs(); const i = kfIndexAt(kfs, edit.time);
+    ['px', 'py', 'ps'].forEach(id => $('#' + id).disabled = !kfs);
+    if (!kfs) { $('#poseHint').textContent = ''; return; }
+    const p = i >= 0 ? kfs[i] : roundPose(api.getPose(edit.track));
+    if (!skipInputs) { $('#px').value = p.x; $('#py').value = p.y; $('#ps').value = p.s; $('#psy').value = p.sy != null ? p.sy : ''; $('#pr').value = r1(p.r || 0); $('#po').value = p.o != null ? Math.round(p.o * 100) / 100 : 1; }
+    const isRect = trackInfo() && trackInfo().type === 'rect';
+    $('#pcWrap').hidden = !isRect;
+    if (isRect && !skipInputs) { const kk = kfs[i >= 0 ? i : 0]; $('#pc').value = (kk && kk.c) || (layerOf(edit.track) || {}).color || '#000000'; }
+    const info = trackInfo();
+    $('#poseHint').textContent = `${edit.track} · ` + (info ? `contain s=${r4(info.fit)}；显示 ${Math.round(info.w * p.s)}×${Math.round(info.h * p.s)}` : '') + (i < 0 ? '　（补间中：修改会在播放头处新建关键帧）' : `　关键帧 #${i + 1}${kfs[i].label ? ' ' + kfs[i].label : ''}`);
+    const L = layerOf(edit.track);
+    $('#winRow').style.display = L ? '' : 'none';
+    if (L && document.activeElement !== $('#winIn') && document.activeElement !== $('#winOut')) { $('#winIn').value = L.in || 0; $('#winOut').value = L.out != null ? L.out : ''; }
+    const info2 = trackInfo();
+    $('#slowWrap').hidden = !(info2 && info2.video);
+    if (L && info2 && info2.video && document.activeElement !== $('#slowLast') && document.activeElement !== $('#slowRate')) { $('#slowLast').value = L.slow ? (L.slow.last || 300) : ''; $('#slowRate').value = L.slow ? (L.slow.rate || 30) : ''; }
+    updateTbox();
+  }
+  ['px', 'py', 'ps', 'psy', 'pr', 'po'].forEach(id => $('#' + id).addEventListener('input', () => { const kfs = curKfs(); if (!kfs) return; const syv = $('#psy').value.trim(); const ov = $('#po').value === '' ? 1 : Math.max(0, Math.min(1, +$('#po').value)); updatePose({ x: +$('#px').value || 0, y: +$('#py').value || 0, s: Math.max(0.001, +$('#ps').value || 1), sy: syv === '' ? undefined : Math.max(0.001, +syv), r: +$('#pr').value || 0, o: ov < 0.9995 ? ov : undefined }, true); }));
+  $('#pc').addEventListener('input', () => { const kfs = curKfs(); if (!kfs) return; const i = ensureKfAtTime(); kfs[i].c = $('#pc').value; edit.dirty = true; setTime(edit.time); });
+  function setWin(inV, outV) {
+    const L = layerOf(edit.track); if (!L) return;
+    const inT = Math.max(0, snap(inV || 0));
+    let outT = outV === '' || outV == null ? null : Math.max(inT + 100, snap(+outV));
+    if (inT > 0) L.in = inT; else delete L.in;
+    if (outT != null) L.out = outT; else delete L.out;
+    edit.dirty = true; setTime(edit.time);
+  }
+  $('#winIn').addEventListener('change', () => setWin(+$('#winIn').value, $('#winOut').value));
+  $('#winOut').addEventListener('change', () => setWin(+$('#winIn').value, $('#winOut').value));
+  function setSlow() {
+    const L = layerOf(edit.track), tr = trackInfo(); if (!L || !tr || !tr.video) return;
+    const last = +$('#slowLast').value || 0, rate = +$('#slowRate').value || 0;
+    if (last > 0 && rate > 1) L.slow = { last: snap(last) || last, rate }; else delete L.slow;
+    if (L.out != null) { L.out = Math.round(videoPlayEnd(tr)); $('#winOut').value = L.out; }   // 消失时间同步 = 播完时刻
+    edit.dirty = true; setTime(edit.time);
+    setSaveMsg(L.slow ? `慢放尾段 ${L.slow.last}ms ×${L.slow.rate}，播完时刻 ${Math.round(videoPlayEnd(tr))}ms` : '已取消慢放尾段', 'ok');
+  }
+  $('#slowLast').addEventListener('change', setSlow);
+  $('#slowRate').addEventListener('change', setSlow);
+  $('#fitBtn').onclick = () => { const info = trackInfo(); if (info) updatePose({ x: 0, y: 0, s: info.fit, r: 0 }); };
+  $('#centerBtn').onclick = () => { if (curKfs()) updatePose({ ...roundPose(api.getPose(edit.track)), x: 0, y: 0 }); };
+
+  // ---- 跟随（父子绑定） ----
+  const D2R = Math.PI / 180;
+  function relToStage(rel, p) { const rad = (p.r || 0) * D2R, c = Math.cos(rad), n = Math.sin(rad), dx = (rel.x || 0) * p.s, dy = (rel.y || 0) * p.s;
+    return { x: p.x + dx * c - dy * n, y: p.y + dx * n + dy * c, s: p.s * rel.s, sy: rel.sy != null ? p.s * rel.sy : undefined, r: (p.r || 0) + (rel.r || 0) }; }
+  function stageToRel(st, p) { const rad = -(p.r || 0) * D2R, c = Math.cos(rad), n = Math.sin(rad), dx = st.x - p.x, dy = st.y - p.y;
+    return { x: (dx * c - dy * n) / p.s, y: (dx * n + dy * c) / p.s, s: st.s / p.s, sy: st.sy != null ? st.sy / p.s : undefined, r: (st.r || 0) - (p.r || 0) }; }
+  // ---- 关键帧纯数学采样（与 WAAPI 对同构 transform 列表的插值一致；不读渲染管线，无副作用、确定性）----
+  function cubicBezier(x1, y1, x2, y2) {
+    const A = a => 3 * a, cx = A(x1), bx = A(x2 - x1) - cx, ax = 1 - cx - bx, cy = A(y1), by = A(y2 - y1) - cy, ay = 1 - cy - by;
+    const fx = t => ((ax * t + bx) * t + cx) * t, fy = t => ((ay * t + by) * t + cy) * t;
+    return u => { if (u <= 0) return 0; if (u >= 1) return 1; let lo = 0, hi = 1, t = u;
+      for (let i = 0; i < 24; i++) { const x = fx(t); if (Math.abs(x - u) < 1e-5) break; if (x < u) lo = t; else hi = t; t = (lo + hi) / 2; }
+      return fy(t); };
+  }
+  const EASE_FN = { linear: u => u, ease: cubicBezier(.25, .1, .25, 1), 'ease-in': cubicBezier(.42, 0, 1, 1), 'ease-out': cubicBezier(0, 0, .58, 1), 'ease-in-out': cubicBezier(.42, 0, .58, 1), 'step-end': u => u < 1 ? 0 : 1, 'step-start': () => 1 };
+  function easeFn(name) {
+    if (!name) return EASE_FN['ease-in-out'];
+    if (EASE_FN[name]) return EASE_FN[name];
+    const m = /^cubic-bezier\(([^)]+)\)$/.exec(name);
+    if (m) { const [a, b, c, d] = m[1].split(',').map(Number); return (EASE_FN[name] = cubicBezier(a, b, c, d)); }
+    return EASE_FN['ease-in-out'];
+  }
+  const poseOfKf = k => ({ x: k.x, y: k.y, s: k.s, sy: k.sy, r: k.r || 0 });
+  /** 在 kfs 上采样 t 时刻的姿态（ease 为到达语义：取目标帧的 ease） */
+  function samplePose(kfs, t) {
+    if (!kfs || !kfs.length) return { x: 0, y: 0, s: 1, r: 0 };
+    if (t <= kfs[0].t || kfs.length === 1) return poseOfKf(kfs[0]);
+    const last = kfs[kfs.length - 1];
+    if (t >= last.t) return poseOfKf(last);
+    let i = 0; while (kfs[i + 1].t < t) i++;
+    const a = kfs[i], b = kfs[i + 1], u = easeFn(b.ease)((t - a.t) / Math.max(1, b.t - a.t));
+    const lerp = (p, q) => p + (q - p) * u;
+    const asy = a.sy ?? a.s, bsy = b.sy ?? b.s, sy = lerp(asy, bsy);
+    const out = { x: lerp(a.x, b.x), y: lerp(a.y, b.y), s: lerp(a.s, b.s), r: lerp(a.r || 0, b.r || 0) };
+    if (Math.abs(sy - out.s) > 0.0001) out.sy = sy;
+    const oo = lerp(a.o != null ? a.o : 1, b.o != null ? b.o : 1);
+    if (oo < 0.9995) out.o = oo;
+    return out;
+  }
+  /** 某素材在 t 时刻的（自身空间）姿态 */
+  function poseAtTime(name, t) { return samplePose(kfsOf(name), t); }
+  function stagePoseAtTime(name, t) { const L = layerOf(name), pose = poseAtTime(name, t); return L && L.follow ? relToStage(pose, stagePoseAtTime(L.follow, t)) : pose; }
+  /** 素材此刻（播放头）的舞台合成姿态 */
+  function stagePoseOf(name) { return stagePoseAtTime(name, edit.time); }
+  /** 父空间参数：当前素材若跟随，返回父的舞台姿态；否则单位 */
+  function parentSpace(name = edit.track) { const L = layerOf(name); return L && L.follow ? stagePoseOf(L.follow) : { x: 0, y: 0, s: 1, r: 0 }; }
+  function toggleFollow(parentName) {
+    const L = layerOf(edit.track), kfs = curKfs(); if (!L || !kfs) return;
+    const cur = L.follow || '';
+    if (cur === (parentName || '')) return;
+    if (parentName) { // 防环/防链到跟随层
+      const P = layerOf(parentName);
+      if (!P || P.follow) { setSaveMsg('跟随目标必须是未跟随别人的素材', 'err'); renderFollow(); return; }
+    }
+    for (const kf of kfs) {   // 逐帧换算，各帧按其时刻的父姿态转换 → 画面不跳
+      let st = { r: 0, ...kf };
+      if (cur) st = relToStage(st, stagePoseAtTime(cur, kf.t));
+      if (parentName) st = stageToRel(st, stagePoseAtTime(parentName, kf.t));
+      const rp = roundPose(st); Object.assign(kf, rp); if (rp.r == null) delete kf.r;
+    }
+    if (parentName) L.follow = parentName; else delete L.follow;
+    api.setFollow(edit.track, parentName || null);
+    const t = edit.tracks.find(x => x.name === edit.track); if (t) t.follow = parentName || null;
+    edit.dirty = true; setTime(edit.time);
+    setSaveMsg(parentName ? `${edit.track} 已跟随 ${parentName}，关键帧已换算` : `${edit.track} 已解除跟随，关键帧已换算回舞台坐标`, 'ok');
+  }
+  // ---- 内部动效 ----
+  function fxOf() { const L = layerOf(edit.track); return L ? (L.fx = L.fx || []) : null; }
+  function applyFxLive() { const L = layerOf(edit.track); if (L) api.setFx(edit.track, L.fx && L.fx.length ? L.fx : null); }
+  function renderFx() {
+    const typeSel = $('#fxType');
+    if (!typeSel.options.length && api && api.fxTypes) typeSel.innerHTML = api.fxTypes.map(t => `<option value="${t.type}">${t.label}</option>`).join('');
+    const L = layerOf(edit.track), fx = L && L.fx || [];
+    $('#fxType').disabled = $('#fxAdd').disabled = !L;
+    const types = api && api.fxTypes ? Object.fromEntries(api.fxTypes.map(t => [t.type, t])) : {};
+    $('#fxList').innerHTML = fx.map((f, i) => { const spec = types[f.type] || { label: f.type, unit: '', def: {} };
+      const dirSel = spec.def.dir !== undefined ? ` 先向<select class="fdr" data-i="${i}"><option value="left" ${(f.dir ?? spec.def.dir) === 'left' ? 'selected' : ''}>左</option><option value="right" ${(f.dir ?? spec.def.dir) === 'right' ? 'selected' : ''}>右</option></select>` : '';
+      return `<div class="row" data-i="${i}"><span style="min-width:64px">${esc(spec.label)}</span> 幅度 <input class="fa" data-i="${i}" type="number" step="${(spec.def.amp || 1) < 1 ? 0.01 : 1}" value="${f.amp ?? spec.def.amp ?? 0}" style="width:64px"><span class="hint">${esc(spec.unit || '')}</span> 周期 <input class="fp" data-i="${i}" type="number" step="100" min="100" value="${f.period ?? spec.def.period ?? 1000}" style="width:70px"><span class="hint">ms</span>${dirSel} <button class="fd mini" data-i="${i}">✕</button></div>`; }).join('');
+    $('#fxList').querySelectorAll('.fa').forEach(inp => inp.onchange = () => { fxOf()[+inp.dataset.i].amp = +inp.value || 0; edit.dirty = true; applyFxLive(); });
+    $('#fxList').querySelectorAll('.fp').forEach(inp => inp.onchange = () => { fxOf()[+inp.dataset.i].period = Math.max(100, +inp.value || 1000); edit.dirty = true; applyFxLive(); });
+    $('#fxList').querySelectorAll('.fdr').forEach(el => el.addEventListener('change', () => { fxOf()[+el.dataset.i].dir = el.value; edit.dirty = true; applyFxLive(); }));
+    $('#fxList').querySelectorAll('.fd').forEach(b => b.onclick = () => { fxOf().splice(+b.dataset.i, 1); edit.dirty = true; applyFxLive(); renderFx(); });
+  }
+  $('#fxAdd').onclick = () => { const fx = fxOf(); if (!fx) return; const spec = api.fxTypes.find(t => t.type === $('#fxType').value); fx.push({ type: spec.type, ...spec.def }); edit.dirty = true; applyFxLive(); renderFx(); };
+
+  function renderFollow() {
+    const sel = $('#followSel'), L = layerOf(edit.track);
+    const cands = edit.tracks.filter(t => t.name !== edit.track && t.fromData && !(layerOf(t.name) || {}).follow);
+    sel.innerHTML = '<option value="">无</option>' + cands.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+    sel.value = (L && L.follow) || '';
+    sel.disabled = !L;
+  }
+  $('#followSel').addEventListener('change', () => toggleFollow($('#followSel').value || null));
+
+  // ---- 自由变换框：四角等比缩放、四边单轴变形、顶部手柄旋转（均绕素材中心，写进播放头所在关键帧） ----
+  const tbox = $('#tbox');
+  function updateTbox() {
+    if (typeof updateQbox === 'function') updateQbox();
+    if (!edit.on || !edit.track || edit.playing || !trackInfo() || edit.quadMode) { tbox.hidden = true; return; }
+    const info = trackInfo(), P = stagePoseOf(edit.track);
+    tbox.hidden = false;
+    tbox.style.left = (stage.w / 2 + P.x) + 'px'; tbox.style.top = (stage.h / 2 + P.y) + 'px';
+    tbox.style.width = (info.w * P.s) + 'px'; tbox.style.height = (info.h * (P.sy ?? P.s)) + 'px';
+    tbox.style.transform = `translate(-50%,-50%) rotate(${P.r || 0}deg)`;
+  }
+  // ---- 四角变形编辑（关键帧级：quad 写在帧上，帧间插值；图层级 quad 作为无帧数据时的全程后备） ----
+  const QZ8 = [0, 0, 0, 0, 0, 0, 0, 0];
+  function sampleQuadPv(kfs, t) {
+    if (!kfs || !kfs.length || !kfs.some(k => k.quad)) return null;
+    if (t <= kfs[0].t || kfs.length === 1) return kfs[0].quad || QZ8;
+    const last = kfs[kfs.length - 1];
+    if (t >= last.t) return last.quad || QZ8;
+    let i = 0; while (kfs[i + 1].t < t) i++;
+    const a = kfs[i], b = kfs[i + 1], u = easeFn(b.ease)((t - a.t) / Math.max(1, b.t - a.t));
+    const qa = a.quad || QZ8, qb = b.quad || QZ8;
+    return qa.map((v, j) => v + (qb[j] - v) * u);
+  }
+  /** 播放头处的有效 quad（帧级采样 → 图层级后备 → 零） */
+  function effectiveQuad(name, t) { const kfs = kfsOf(name), L = layerOf(name); return (kfs && kfs.some(k => k.quad)) ? sampleQuadPv(kfs, t) : ((L && L.quad) || null); }
+  const qbox = $('#qbox');
+  const stageXY = (nx, ny, info, P) => {   // 素材原始像素点 → 舞台坐标（含跟随合成姿态）
+    const rad = (P.r || 0) * D2R, c = Math.cos(rad), n = Math.sin(rad);
+    const lx = (nx - info.w / 2) * P.s, ly = (ny - info.h / 2) * (P.sy ?? P.s);
+    return { x: stage.w / 2 + P.x + lx * c - ly * n, y: stage.h / 2 + P.y + lx * n + ly * c };
+  };
+  const naturalXY = (pt, info, P) => {     // 舞台坐标 → 素材原始像素点
+    const rad = -(P.r || 0) * D2R, c = Math.cos(rad), n = Math.sin(rad);
+    const dx = pt.x - stage.w / 2 - P.x, dy = pt.y - stage.h / 2 - P.y;
+    return { x: (dx * c - dy * n) / P.s + info.w / 2, y: (dx * n + dy * c) / (P.sy ?? P.s) + info.h / 2 };
+  };
+  const CORNERS = info => [[0, 0], [info.w, 0], [info.w, info.h], [0, info.h]];
+  function updateQbox() {
+    const L = layerOf(edit.track), info = trackInfo();
+    if (!edit.on || !edit.quadMode || !L || !info || edit.playing) { qbox.hidden = true; return; }
+    qbox.hidden = false;
+    const q = effectiveQuad(edit.track, edit.time) || QZ8, P = stagePoseOf(edit.track);
+    const pts = CORNERS(info).map((c0, i) => stageXY(c0[0] + q[i * 2], c0[1] + q[i * 2 + 1], info, P));
+    qbox.querySelectorAll('.qh').forEach((h, i) => { h.style.left = pts[i].x + 'px'; h.style.top = pts[i].y + 'px'; });
+    qbox.querySelector('polygon').setAttribute('points', pts.map(p => `${p.x},${p.y}`).join(' '));
+  }
+  $('#quadBtn').onclick = () => { edit.quadMode = !edit.quadMode; $('#quadBtn').classList.toggle('on', edit.quadMode); updateTbox(); updateQbox(); };
+  $('#quadReset').onclick = () => {
+    const L = layerOf(edit.track), kfs = curKfs(); if (!L || !kfs) return;
+    const i = kfIndexAt(kfs, edit.time);
+    let did = false;
+    if (i >= 0 && kfs[i].quad) { delete kfs[i].quad; did = true; }
+    if (L.quad) { delete L.quad; did = true; }
+    if (!did) return setSaveMsg('当前帧没有变形可复原', 'err');
+    api.setQuad(edit.track, effectiveQuad(edit.track, edit.time)); edit.dirty = true; updateQbox();
+    setSaveMsg('已复原当前帧的四角变形', 'ok');
+  };
+  qbox.querySelectorAll('.qh').forEach(h => h.addEventListener('pointerdown', e => {
+    const L = layerOf(edit.track), info = trackInfo(), kfs = curKfs(); if (!L || !info || !kfs) return;
+    e.stopPropagation(); stopPlay();
+    const c = +h.dataset.c, P = stagePoseOf(edit.track);
+    const i = ensureKfAtTime();                                     // 变形写进播放头所在关键帧（没有则新建）
+    const base = (kfs[i].quad || effectiveQuad(edit.track, edit.time) || QZ8).slice();
+    if (L.quad) { delete L.quad; setSaveMsg('已把图层级全程变形迁移为关键帧变形', 'ok'); }   // 旧数据迁移
+    h.setPointerCapture(e.pointerId);
+    const move = ev2 => {
+      const nat = naturalXY(toStage(ev2), info, P), c0 = CORNERS(info)[c];
+      const q = base;
+      q[c * 2] = Math.round((nat.x - c0[0]) * 10) / 10; q[c * 2 + 1] = Math.round((nat.y - c0[1]) * 10) / 10;
+      kfs[i].quad = q; api.setQuad(edit.track, q); edit.dirty = true; updateQbox(); renderKf();
+    };
+    const up = ev2 => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up); try { h.releasePointerCapture(ev2.pointerId); } catch (_) {} };
+    h.addEventListener('pointermove', move); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+  }));
+
+  tbox.querySelectorAll('.h').forEach(hd => hd.addEventListener('pointerdown', e => {
+    if (!curKfs()) return;
+    e.stopPropagation(); stopPlay();
+    const kind = hd.dataset.k, i = ensureKfAtTime(), k0 = { ...curKfs()[i] };
+    const P = stagePoseOf(edit.track);
+    const cx = stage.w / 2 + P.x, cy = stage.h / 2 + P.y;      // 盒中心（舞台px），缩放/旋转都绕它
+    const rad = (P.r || 0) * D2R, parR = parentSpace().r || 0;
+    const loc = pt => { const dx = pt.x - cx, dy = pt.y - cy, c = Math.cos(-rad), n = Math.sin(-rad); return { x: dx * c - dy * n, y: dx * n + dy * c }; };
+    const l0 = loc(toStage(e));
+    hd.setPointerCapture(e.pointerId);
+    const move = ev2 => {
+      const p = toStage(ev2), l = loc(p);
+      if (kind === 'rot') {
+        let ang = Math.atan2(p.y - cy, p.x - cx) / D2R + 90 - parR;
+        if (ev2.shiftKey) ang = Math.round(ang / 15) * 15;
+        updatePose({ ...k0, r: Math.round(((ang + 540) % 360 - 180) * 10) / 10 });
+      } else if (kind.length === 2) {          // 四角：等比
+        const ratio = Math.hypot(l.x, l.y) / Math.max(1, Math.hypot(l0.x, l0.y));
+        updatePose({ ...k0, s: Math.max(0.001, k0.s * ratio), sy: k0.sy != null ? Math.max(0.001, k0.sy * ratio) : undefined });
+      } else if (kind === 'e' || kind === 'w') {   // 左右边：横向变形
+        const ratio = Math.abs(l.x) / Math.max(1, Math.abs(l0.x));
+        updatePose({ ...k0, s: Math.max(0.001, k0.s * ratio), sy: k0.sy ?? k0.s });
+      } else {                                      // 上下边：纵向变形
+        updatePose({ ...k0, sy: Math.max(0.001, (k0.sy ?? k0.s) * Math.abs(l.y) / Math.max(1, Math.abs(l0.y))) });
+      }
+    };
+    const up = ev2 => { hd.removeEventListener('pointermove', move); hd.removeEventListener('pointerup', up); hd.removeEventListener('pointercancel', up); try { hd.releasePointerCapture(ev2.pointerId); } catch (_) {} };
+    hd.addEventListener('pointermove', move); hd.addEventListener('pointerup', up); hd.addEventListener('pointercancel', up);
+  }));
+
+  // ---- 段选 / 复制 / 粘贴（选中 = 同轨 kf 对象引用，对象原地修改所以引用稳定）----
+  edit.selTrack = null; edit.selKfs = []; edit.clip = null;
+  const isSel = k => edit.selKfs.includes(k);
+  function setSel(track, arr) { edit.selTrack = track; edit.selKfs = arr; renderKf(); renderTimeline(); renderSelInfo(); }
+  function renderSelInfo() {
+    $('#selInfo').textContent = edit.selKfs.length > 1 ? `已选 ${edit.selKfs.length} 帧` : '当前素材';
+    $('#kfCopy').disabled = !edit.selKfs.length;
+    $('#kfDelSel').disabled = !edit.selKfs.length;
+    $('#kfPaste').disabled = !edit.clip;
+    $('#kfPaste').textContent = edit.clip ? `📋 粘贴@播放头(${edit.clip.kfs.length}帧)` : '📋 粘贴@播放头';
+  }
+  function selectSingle(track, k) { setSel(track, [k]); }
+  function rangeSelect(track, k) {   // Shift+点击：锚点（已选首帧/播放头所在帧）到 k 的整段
+    const kfs = kfsOf(track); if (!kfs) return;
+    const anchor = (edit.selTrack === track && edit.selKfs[0]) || kfs[kfIndexAt(kfs, edit.time)] || k;
+    const [a, b] = [Math.min(anchor.t, k.t), Math.max(anchor.t, k.t)];
+    setSel(track, kfs.filter(x => x.t >= a && x.t <= b));
+  }
+  function copySel() {
+    if (!edit.selKfs.length) return;
+    const base = Math.min(...edit.selKfs.map(k => k.t));
+    edit.clip = { kfs: edit.selKfs.map(k => JSON.parse(JSON.stringify(k))), base };
+    setSaveMsg(`已复制 ${edit.clip.kfs.length} 帧（自 ${edit.selTrack}）`, 'ok'); renderSelInfo();
+  }
+  function pasteClip() {
+    const kfs = curKfs(); if (!kfs || !edit.clip) return;
+    const at = edit.time, pasted = [];
+    for (const c of edit.clip.kfs) {
+      const t = snap(at + (c.t - edit.clip.base));
+      const nk = { ...JSON.parse(JSON.stringify(c)), t };
+      const i = kfIndexAt(kfs, t);
+      if (i >= 0) kfs[i] = nk; else kfs.push(nk);
+      pasted.push(nk);
+    }
+    kfs.sort((a, b) => a.t - b.t);
+    edit.dirty = true; setSel(edit.track, pasted); setTime(at);
+    setSaveMsg(`已在 ${at}ms 粘贴 ${pasted.length} 帧到 ${edit.track}`, 'ok');
+  }
+  function deleteSel() {
+    const kfs = kfsOf(edit.selTrack); if (!kfs || !edit.selKfs.length) return;
+    if (kfs.length - edit.selKfs.length < 1) return setSaveMsg('不能删空：至少保留 1 帧', 'err');
+    for (const k of edit.selKfs) { const i = kfs.indexOf(k); if (i >= 0) kfs.splice(i, 1); }
+    edit.dirty = true; setSel(edit.selTrack, []); setTime(Math.min(edit.time, lastT(kfs)));
+  }
+  $('#kfCopy').onclick = copySel; $('#kfPaste').onclick = pasteClip; $('#kfDelSel').onclick = deleteSel;
+
+  /** 把 kfs[i] 移到 newT；ripple=true 时后续帧平移同样的量。返回实际 t */
+  function moveKf(kfs, i, newT, ripple) {
+    const k = kfs[i], minT = i > 0 ? kfs[i - 1].t + 100 : 0;
+    newT = Math.max(minT, snap(newT));
+    if (!ripple && i < kfs.length - 1) newT = Math.min(newT, kfs[i + 1].t - 100);
+    const delta = newT - k.t; if (!delta) return k.t;
+    k.t = newT; if (ripple) for (let j = i + 1; j < kfs.length; j++) kfs[j].t += delta;
+    edit.dirty = true; return newT;
+  }
+
+  // ---- 关键帧表 ----
+  function renderKf() {
+    const tb = $('#kfTable'), kfs = curKfs();
+    if (!kfs) { tb.innerHTML = ''; $('#kfAdd').disabled = true; return; }
+    $('#kfAdd').disabled = false;
+    const sel = kfIndexAt(kfs, edit.time);
+    tb.innerHTML = '<tr><th>#</th><th>t(ms)</th><th>名称</th><th>x</th><th>y</th><th>s</th><th>r°</th><th title="从上一帧到本帧的过渡；首帧没有">ease→此帧</th><th></th></tr>' + kfs.map((k, i) => `<tr class="${isSel(k) ? 'selr' : i === sel ? 'cur' : ''}" data-i="${i}">
+      <td>${i + 1}</td><td><input type="number" step="100" min="0" value="${k.t}" data-i="${i}" class="kt"></td>
+      <td><input type="text" class="kl" data-i="${i}" value="${esc(k.label || '')}" placeholder="—"></td>
+      <td>${k.x}</td><td>${k.y}</td><td>${k.s}${k.sy != null ? '×' + k.sy : ''}${k.quad ? ' ◇' : ''}</td><td>${k.r || 0}</td>
+      <td>${i === 0 ? '<span class="hint">—</span>' : `<select data-i="${i}" class="ke" title="从上一帧到本帧的过渡">${easeOptions(k.ease)}</select>`}</td>
+      <td><button data-i="${i}" class="kd" title="删除" ${kfs.length < 2 ? 'disabled' : ''}>✕</button></td></tr>`).join('');
+    tb.querySelectorAll('tr[data-i]').forEach(tr => tr.onclick = e => { if (['INPUT', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return; const k = kfs[+tr.dataset.i]; if (e.shiftKey) rangeSelect(edit.track, k); else selectSingle(edit.track, k); setTime(k.t); });
+    tb.querySelectorAll('.kt').forEach(inp => inp.onchange = () => { const t = moveKf(kfs, +inp.dataset.i, +inp.value || 0, true); setTime(t); });
+    tb.querySelectorAll('.kl').forEach(inp => inp.onchange = () => { kfs[+inp.dataset.i].label = inp.value.trim(); edit.dirty = true; renderTimeline(); renderPose(true); });
+    tb.querySelectorAll('.ke').forEach(sel => sel.onchange = () => { kfs[+sel.dataset.i].ease = sel.value; edit.dirty = true; });
+    tb.querySelectorAll('.kd').forEach(b => b.onclick = () => { kfs.splice(+b.dataset.i, 1); edit.dirty = true; setTime(Math.min(edit.time, lastT(kfs))); });
+  }
+  $('#kfAdd').onclick = () => { if (!curKfs()) return; setTime(+$('#kfT').value || 0); ensureKfAtTime($('#kfName').value.trim()); $('#kfName').value = ''; renderAll(); };
+  $('#kfT').addEventListener('change', () => setTime(+$('#kfT').value || 0));
+  $('#kfPlay').onclick = () => { if (edit.playing) return stopPlay(); setTime(0); startPlay(); };
+  $('#scenePlay').onclick = () => { if (!api) return; const sc = edit.scene; api.setTracksData(edit.data); exitEdit(true); api.resume(); api.goto(sc); };
+
+  // ===== 时间轴 =====
+  const PX = 12, PAD = 14;                        // 每 100ms 的像素；左侧留白（0s 标签/首帧不被裁）
+  const tlBody = $('#tlBody'), tlRows = $('#tlRows'), tlRuler = $('#tlRuler'), tlNames = $('#tlNames'), tlHead = $('#tlHead');
+  const tToX = t => PAD + t / 100 * PX, xToT = x => snap((x - PAD) / PX * 100);
+  let tlDrag = null;
+  function tlDuration() { return Math.max(3000, sceneEnd(), edit.time) + 3000; }
+  function renderTimeline() {
+    if (!edit.on) return;
+    const D = tlDuration(), W = tToX(D) + 60;
+    tlBody.style.width = W + 'px';
+    let ruler = '';
+    for (let t = 0; t <= D; t += 100) { const big = t % 1000 === 0, mid = t % 500 === 0; ruler += `<div class="tick ${big ? 'l' : mid ? 'm' : ''}" style="left:${tToX(t)}px"></div>`; if (big) ruler += `<div class="lb" style="left:${tToX(t)}px">${(t / 1000).toFixed(0)}s</div>`; }
+    tlRuler.innerHTML = ruler;
+    const rows = topFirst();
+    tlRows.innerHTML = rows.map(tr => {
+      const kfs = kfsOf(tr.name) || [], cur = tr.name === edit.track;
+      const tween = kfs.length >= 2 ? `<div class="tw" style="left:${tToX(kfs[0].t)}px;width:${(lastT(kfs) - kfs[0].t) / 100 * PX}px"></div>` : '';
+      const L = layerOf(tr.name); let winBar = '';
+      if (L && ((L.in || 0) > 0 || L.out != null)) {
+        const a = L.in || 0, b = L.out != null ? L.out : D;
+        winBar = `<div class="win" style="left:${tToX(a)}px;width:${(b - a) / 100 * PX}px"></div><div class="hin" data-name="${esc(tr.name)}" style="left:${tToX(a)}px" title="出现 ${a}ms"></div>` + (L.out != null ? `<div class="hout" data-name="${esc(tr.name)}" style="left:${tToX(b)}px" title="消失 ${b}ms"></div>` : '');
+        if ((tr.video || tr.audio) && tr.dur) {   // 视频/音频：播放段子条（含慢放尾段拉长）；窗口带其后的尾巴 = 定格末帧
+          const pe = Math.min(videoPlayEnd(tr), b);
+          const sl = slowOf(tr.name);
+          winBar += `<div class="vp" style="left:${tToX(a)}px;width:${(pe - a) / 100 * PX}px" title="播放 ${a}→${pe}ms${sl ? `（尾 ${sl.last}ms 慢放 ×${sl.rate}）` : ''}${b > pe ? '，其后定格末帧至 ' + b + 'ms' : ''}"></div>`;
+        }
+      }
+      return `<div class="rw ${cur ? 'cur' : ''} ${tr.hidden ? 'off' : ''}" data-name="${esc(tr.name)}">${winBar}${tween}${kfs.map((k, i) => `<div class="kf ${isSel(k) ? 'selr' : cur && k.t === edit.time ? 'sel' : ''}" data-name="${esc(tr.name)}" data-i="${i}" style="left:${tToX(k.t)}px" title="${k.t} ms${k.label ? ' · ' + esc(k.label) : ''}"></div>${k.label ? `<span class="klb" style="left:${tToX(k.t) + 10}px">${esc(k.label)}</span>` : ''}`).join('')}</div>`;
+    }).join('');
+    tlNames.innerHTML = rows.map(tr => `<div class="nm ${tr.name === edit.track ? 'cur' : ''} ${tr.hidden ? 'off' : ''}" data-name="${esc(tr.name)}"><span>${esc(tr.name)}</span><span class="meta">${(kfsOf(tr.name) || []).length} 帧</span></div>`).join('');
+    tlNames.querySelectorAll('.nm').forEach(el => el.onclick = () => selectTrack(el.dataset.name, true));
+    tlHead.style.left = tToX(edit.time) + 'px';
+    // 自动滚到播放头：只在播放头时间真的变化时执行（拖关键帧/时间窗不动播放头，视图保持在拖拽处）
+    if (!tlDrag && renderTimeline._lastHeadT !== edit.time) {
+      const sc = $('#tlScroll'), hx = tToX(edit.time);
+      if (hx < sc.scrollLeft + 20 || hx > sc.scrollLeft + sc.clientWidth - 20) sc.scrollLeft = Math.max(0, hx - sc.clientWidth / 2);
+    }
+    renderTimeline._lastHeadT = edit.time;
+  }
+  // 竖向滚动同步：右侧行区滚动时，左侧名称列跟着滚（两边行高一致，顶部控制条=标尺同高 26px）
+  $('#tlScroll').addEventListener('scroll', () => { tlNames.scrollTop = $('#tlScroll').scrollTop; });
+  const tlX = e => e.clientX - tlBody.getBoundingClientRect().left;
+  tlBody.addEventListener('pointerdown', e => {
+    if (!edit.on || e.button !== 0) return;
+    stopPlay();
+    const hEl = e.target.closest('.hin, .hout');
+    if (hEl) {
+      const name = hEl.dataset.name; if (name !== edit.track) { edit.track = name; api.selectTrack(name); }
+      const Lh = layerOf(name);
+      tlDrag = { type: hEl.classList.contains('hin') ? 'hin' : 'hout', name, cx0: e.clientX, t0: hEl.classList.contains('hin') ? ((Lh && Lh.in) || 0) : (Lh && Lh.out) };
+      tlBody.setPointerCapture(e.pointerId);
+      return;
+    }
+    const kfEl = e.target.closest('.kf');
+    if (kfEl) {
+      const name = kfEl.dataset.name, i = +kfEl.dataset.i, kfs = kfsOf(name);
+      if (e.shiftKey) {   // Shift+点击 = 段选（不启动拖动、不动播放头）
+        if (name !== edit.track) { edit.track = name; api.selectTrack(name); }
+        rangeSelect(name, kfs[i]);
+        return;
+      }
+      if (name !== edit.track) { edit.track = name; api.selectTrack(name); }
+      selectSingle(name, kfs[i]);
+      tlDrag = { type: 'kf', name, i, kfs, cx0: e.clientX, t0: kfs[i].t, ripple: !e.altKey, moved: false };   // 播放头此刻不动：纯点击在释放时跳帧，拖动则全程不动
+    } else {
+      const row = e.target.closest('.rw'); if (row && row.dataset.name !== edit.track) { edit.track = row.dataset.name; api.selectTrack(edit.track); }
+      tlDrag = { type: 'head' };
+      setTime(xToT(tlX(e)));
+    }
+    tlBody.setPointerCapture(e.pointerId);
+  });
+  tlBody.addEventListener('pointermove', e => {
+    if (!tlDrag) return;
+    if (tlDrag.type === 'head') { setTime(xToT(tlX(e))); return; }
+    if (tlDrag.type === 'hin' || tlDrag.type === 'hout') {
+      const L = layerOf(tlDrag.name); if (!L) return;
+      const t = snap((tlDrag.t0 || 0) + (e.clientX - tlDrag.cx0) / PX * 100);
+      if (tlDrag.type === 'hin') { const inT = Math.min(t, (L.out != null ? L.out - 100 : t)); if (inT > 0) L.in = inT; else delete L.in; }
+      else L.out = Math.max((L.in || 0) + 100, t);
+      edit.dirty = true; renderTimeline(); renderPose(true);
+      return;
+    }
+    const d = tlDrag, want = d.t0 + Math.round((e.clientX - d.cx0) / PX) * 100;
+    if (Math.abs(e.clientX - d.cx0) > 3) d.moved = true;
+    moveKf(d.kfs, d.i, want, d.ripple);   // 只动关键帧，播放头留在原地
+    renderTimeline();
+    tlRows.querySelectorAll('.kf.selr, .kf.sel').forEach(el => el.classList.add('drag'));
+  });
+  const tlUp = e => { if (!tlDrag) return; const d = tlDrag; tlDrag = null; try { tlBody.releasePointerCapture(e.pointerId); } catch (_) {} if (d.type === 'kf' && !d.moved) setTime(d.kfs[d.i].t); else if (d.type === 'kf' || d.type === 'hin' || d.type === 'hout') setTime(edit.time); };   // 纯点击关键帧=跳到该帧；拖动=播放头不动，只刷新舞台/面板
+  tlBody.addEventListener('pointerup', tlUp); tlBody.addEventListener('pointercancel', tlUp);
+  tlBody.addEventListener('dblclick', e => {
+    if (!edit.on) return;
+    const kfEl = e.target.closest('.kf');
+    if (kfEl) {   // 双击菱形：去表格里命名
+      const kfs = kfsOf(kfEl.dataset.name); if (kfEl.dataset.name !== edit.track) { edit.track = kfEl.dataset.name; api.selectTrack(edit.track); }
+      setTime(kfs[+kfEl.dataset.i].t); const inp = $(`#kfTable .kl[data-i="${kfEl.dataset.i}"]`); if (inp) { inp.focus(); inp.select(); }
+      return;
+    }
+    const row = e.target.closest('.rw'); if (row && row.dataset.name !== edit.track) { edit.track = row.dataset.name; api.selectTrack(edit.track); }
+    setTime(xToT(tlX(e))); ensureKfAtTime(); renderAll();
+  });
+  $('#tlHome').onclick = () => setTime(0);
+  $('#tlPlay').onclick = () => togglePlay();
+  $('#tlPrev').onclick = () => jumpKf(-1); $('#tlNext').onclick = () => jumpKf(1);
+  function jumpKf(dir) { const kfs = curKfs(); if (!kfs) return; const ts = kfs.map(k => k.t); const t = dir < 0 ? ts.filter(x => x < edit.time).pop() : ts.find(x => x > edit.time); if (t != null) setTime(t); }
+
+  // 播放：从播放头开始，所有 ≥2 帧的素材一起；播放头实时跟随；到末尾停住
+  let playRaf = 0;
+  function togglePlay() { edit.playing ? stopPlay() : startPlay(); }
+  function startPlay() {
+    const end = sceneEnd(); if (!edit.tracks.some(t => (kfsOf(t.name) || []).length >= 2 || winOf(t.name))) return setSaveMsg('至少一个素材有 2 个关键帧（或时间窗）才能播放', 'err');
+    const from = edit.time >= end ? 0 : edit.time;
+    edit.playing = true; updateTbox(); $('#tlPlay').textContent = '⏹'; $('#tlPlay').classList.add('on'); $('#kfPlay').disabled = true;
+    edit.tracks.forEach(tr => { const kfs = kfsOf(tr.name), win = winOf(tr.name); api.dimTrack(tr.name, false); if ((kfs && kfs.length >= 2) || win) api.playTrack(tr.name, kfs || [], from, win); });
+    const start = performance.now();
+    const vidOn = new Set();
+    const syncVideos = t => edit.tracks.forEach(tr => {
+      if (tr.spine) return api.seekSpine(tr.name, spineContentMs(tr.name, t));   // Spine 确定性 seek，逐帧钉时间即是播放
+      if (!tr.video && !tr.audio) return;
+      const L = layerOf(tr.name), inT = (L && L.in) || 0, outT = L && L.out;
+      const sl = slowOf(tr.name);
+      const boundary = sl && tr.dur ? inT + Math.max(0, tr.dur - sl.last) : Infinity;
+      const active = t >= inT && (outT == null || t < outT);
+      if (!active) { if (vidOn.has(tr.name)) { api.pauseVideo(tr.name); vidOn.delete(tr.name); } return; }
+      if (t >= boundary) {   // 慢放尾段：暂停 + 按映射逐帧 seek
+        if (vidOn.has(tr.name)) { api.pauseVideo(tr.name); vidOn.delete(tr.name); }
+        api.seekVideo(tr.name, videoContentMs(tr.name, t, tr.dur) / 1000);
+      } else if (!vidOn.has(tr.name)) { api.seekVideo(tr.name, (t - inT) / 1000); api.playVideo(tr.name); vidOn.add(tr.name); }
+    });
+    const stopVideos = () => vidOn.forEach(n => api.pauseVideo(n));
+    const tick = () => { if (!edit.playing) { stopVideos(); return; } const t = from + (performance.now() - start); if (t >= end) { edit.playing = false; stopVideos(); $('#tlPlay').textContent = '▶'; $('#tlPlay').classList.remove('on'); $('#kfPlay').disabled = false; setTime(end); return; } edit.time = Math.floor(t); syncVideos(t); tlHead.style.left = tToX(t) + 'px'; $('#tlTime').textContent = `${Math.floor(t)} ms`; playRaf = requestAnimationFrame(tick); };
+    playRaf = requestAnimationFrame(tick);
+  }
+  function stopPlay() { if (!edit.playing) return; edit.playing = false; cancelAnimationFrame(playRaf); $('#tlPlay').textContent = '▶'; $('#tlPlay').classList.remove('on'); $('#kfPlay').disabled = false; setTime(snap(edit.time)); }
+
+  // ---- 保存 ----
+  function tracksSource(data) {
+    return `/* tracks.js — 素材图层与关键帧。由 utils/preview.html 的编辑模式生成/保存，也可手改。
+ * 结构：{ <sceneId>: {
+ *   layers: [ { name, src, loop?, hidden? }, ... ],        // 素材列表，数组顺序 = 叠放顺序（后者在上）；场景内 ctx.mountLayers() 创建
+ *   keys:   { <name>: [ { t: 毫秒, x, y, s, ease?, label? }, ... ] }   // 每个素材独立的关键帧
+ * } }
+ * x/y = 相对舞台中心的偏移(px)，s = 缩放(1 = 素材原始像素)。单帧 = 静态姿态；≥2 帧由 ctx.runTracks() 播放。 */
+window.TRACKS = ${JSON.stringify(data, null, 2)};
+`;
+  }
+  function setSaveMsg(msg, cls) { const el = $('#saveMsg'); el.textContent = msg; el.className = cls || ''; }
+  $('#save').onclick = async () => {
+    if (!edit.data) return;
+    const path = `artifacts/${project}/src/tracks.js`;
+    try {
+      // 防覆盖护栏：进入编辑后磁盘若被外部改过（多半是 agent），直接保存会把那些修改整体盖掉
+      const now = await fetch(`/${path}?_=${Date.now()}`).then(r => r.ok ? r.text() : null).catch(() => null);
+      if (edit.diskSnap != null && now != null && now !== edit.diskSnap
+        && !confirm('⚠️ 磁盘上的 tracks.js 在你进入编辑后被外部修改过（多半是 agent 改的）。\n继续保存会覆盖丢失那些修改！\n\n建议点「取消」，然后点顶栏 ↻重载 拿到最新数据后重做本次修改。\n\n仍要覆盖保存吗？')) { setSaveMsg('已取消：请先 ↻重载 再改再存', 'err'); return; }
+      const content = tracksSource(edit.data);
+      const r = await fetch('/__save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, content }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      edit.dirty = false; api.setTracksData(clone(edit.data)); edit.diskSnap = content;
+      setSaveMsg(`已保存 ${path} · ${new Date().toLocaleTimeString()}`, 'ok'); log({ type: 'saved', path });
+    } catch (e) { setSaveMsg(`保存失败：${e.message}（需要用 utils/serve.sh 起的服务；或改用「复制 JSON」手动粘贴）`, 'err'); }
+  };
+  $('#copy').onclick = async () => { if (!edit.data) return; try { await navigator.clipboard.writeText(tracksSource(edit.data)); setSaveMsg('已复制 tracks.js 全文到剪贴板', 'ok'); } catch (e) { setSaveMsg('复制失败：' + e.message, 'err'); } };
+
+  // ---- 舞台拖动 / 滚轮缩放（作用于当前素材在播放头处的关键帧，没有则新建） ----
+  const hit = $('#hit'); let drag = null;
+  const toStage = e => { const r = hit.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * stage.w, y: (e.clientY - r.top) / r.height * stage.h }; };
+  hit.addEventListener('pointerdown', e => { if (!curKfs()) return; stopPlay(); const i = ensureKfAtTime(); const p = toStage(e); drag = { x0: p.x, y0: p.y, pose: { ...curKfs()[i] } }; hit.setPointerCapture(e.pointerId); hit.classList.add('drag'); renderAll(); });
+  hit.addEventListener('pointermove', e => { if (!drag) return; const p = toStage(e); const P = parentSpace(); const rad = -(P.r || 0) * D2R, c = Math.cos(rad), n = Math.sin(rad), dx = p.x - drag.x0, dy = p.y - drag.y0;
+    updatePose({ x: drag.pose.x + (dx * c - dy * n) / P.s, y: drag.pose.y + (dx * n + dy * c) / P.s, s: drag.pose.s, r: drag.pose.r || 0 }); });
+  const endDrag = e => { if (!drag) return; drag = null; hit.classList.remove('drag'); try { hit.releasePointerCapture(e.pointerId); } catch (_) {} };
+  hit.addEventListener('pointerup', endDrag); hit.addEventListener('pointercancel', endDrag);
+  hit.addEventListener('wheel', e => {
+    const kfs = curKfs(); if (!kfs) return; e.preventDefault(); stopPlay();
+    const i = ensureKfAtTime(), k = kfs[i];
+    const f = Math.exp(-e.deltaY * (e.shiftKey ? 0.0004 : 0.0015));
+    const s = Math.max(0.01, Math.min(50, k.s * f)), ratio = s / k.s;
+    const L = layerOf(edit.track);
+    if (L && L.follow) { updatePose({ ...k, s }); return; }   // 跟随层：绕自身中心缩放
+    const p = toStage(e), cx = p.x - stage.w / 2, cy = p.y - stage.h / 2;
+    updatePose({ x: cx + (k.x - cx) * ratio, y: cy + (k.y - cy) * ratio, s, r: k.r || 0 });
+  }, { passive: false });
+
+  loadProjects().then(() => { applyScale(); drawOverlay(); if (project) load(); });
+})();
+</script>
+</body></html>

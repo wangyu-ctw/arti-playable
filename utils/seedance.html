@@ -1,0 +1,212 @@
+<!doctype html>
+<!-- seedance.html — Seedance 2.5 视频生成工具页。
+     用法：utils/serve.sh 起服务后打开 http://localhost:8080/utils/seedance.html
+     请求经 serve.py 的 /artifex/* 代理转发到内部 artifex 服务（域名在 utils/artifex.host 或环境变量 ARTIFEX_HOST 配置，不入库；凭证以 X-Authorization 头传给代理，代理转成 Authorization）。
+     左：生成表单（POST /api/v4/byteplus/seedance/gen）；右：结果列表（GET /api/v4/generation/generated_images，可自动轮询），
+     每条显示 status / path 预览 / unified_info 完整 JSON。 -->
+<html lang="zh"><head><meta charset="utf-8"><title>Seedance 生成台</title>
+<style>
+  :root { --bg:#14161a; --panel:#1d2026; --line:#2c313a; --fg:#e6e8ec; --dim:#8b93a1; --acc:#4da3ff; --warn:#ffb648; --ok:#7ee787; --red:#ff5b5b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.5 -apple-system,"PingFang SC",Menlo,monospace; }
+  body { display:grid; grid-template-rows:48px 1fr; grid-template-columns:460px 1fr; height:100vh; }
+  header { grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:0 14px; background:var(--panel); border-bottom:1px solid var(--line); overflow-x:auto; scrollbar-width:none; }
+  header > * { flex-shrink:0; }
+  h3 { margin:0 0 4px; font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; }
+  label { color:var(--dim); font-size:12px; }
+  input, select, textarea, button { font:inherit; color:var(--fg); background:#262a32; border:1px solid var(--line); border-radius:6px; padding:6px 9px; }
+  input[type=checkbox] { width:auto; }
+  textarea { width:100%; resize:vertical; }
+  button { cursor:pointer; white-space:nowrap; } button:hover { border-color:var(--acc); } button:disabled { opacity:.5; cursor:default; }
+  button.primary { background:var(--acc); color:#04121f; border-color:var(--acc); font-weight:700; }
+  #form { padding:14px; overflow:auto; border-right:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; gap:10px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .row > input, .row > select { flex:1; min-width:0; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  #genOut { white-space:pre-wrap; word-break:break-all; background:#101216; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px; max-height:180px; overflow:auto; }
+  #results { padding:14px; overflow:auto; }
+  .bar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+  .item { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:10px; background:var(--panel); }
+  .item .head { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .st { padding:1px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+  .st.done { background:rgba(126,231,135,.15); color:var(--ok); } .st.pending { background:rgba(255,182,72,.15); color:var(--warn); } .st.failed { background:rgba(255,91,91,.15); color:var(--red); }
+  .item a { color:var(--acc); word-break:break-all; font-size:12px; }
+  .item video, .item img { max-width:320px; max-height:220px; border-radius:8px; display:block; margin-top:8px; background:#000; }
+  details { margin-top:8px; } summary { cursor:pointer; color:var(--dim); font-size:12px; }
+  details pre { white-space:pre-wrap; word-break:break-all; background:#101216; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px; max-height:300px; overflow:auto; }
+  .hint { color:var(--dim); font-size:12px; }
+  #err { color:var(--red); white-space:pre-wrap; word-break:break-all; }
+  .up { padding:3px 9px; font-size:12px; }
+  .lbl-row { display:flex; align-items:center; gap:8px; }
+  .lbl-row label { flex:1; }
+  .thumbs { display:flex; gap:6px; flex-wrap:wrap; }
+  .thumbs img, .thumbs video { height:48px; border-radius:6px; background:#000; border:1px solid var(--line); }
+</style></head>
+<body>
+<header>
+  <b>Seedance 生成台</b>
+  <label>org_type <input id="orgType" style="width:90px"></label>
+  <label>org_id <input id="orgId" style="width:80px"></label>
+  <label>appid <input id="appid" style="width:100px"></label>
+  <label>Authorization <input id="auth" type="text" style="width:320px" placeholder="如 Bearer xxx"></label>
+  <span class="hint">经 serve.py 代理 → 内部 artifex 服务（域名见 utils/artifex.host；凭证存 localStorage）</span>
+</header>
+<section id="form">
+  <h3>生成（seedance 2.5）</h3>
+  <label>提示词</label>
+  <textarea id="prompt" rows="4" placeholder="将视频中的人物换成图片中的"></textarea>
+  <div class="lbl-row"><label>参考图 reference_images（每行一个 URL，可空）</label><button class="up" data-kind="image" data-target="refImgs" data-multi="1">⬆ 上传图片</button><span class="hint" id="st-refImgs"></span></div>
+  <textarea id="refImgs" rows="2"></textarea>
+  <div class="thumbs" id="th-refImgs"></div>
+  <div class="lbl-row"><label>参考视频 reference_videos（每行一个 URL，可空）</label><button class="up" data-kind="video" data-target="refVids" data-multi="1">⬆ 上传视频</button><span class="hint" id="st-refVids"></span></div>
+  <textarea id="refVids" rows="2"></textarea>
+  <div class="thumbs" id="th-refVids"></div>
+  <div class="grid2">
+    <div><div class="lbl-row"><label>首帧图 first_frame_image</label><button class="up" data-kind="image" data-target="firstFrame">⬆</button></div><input id="firstFrame" placeholder="可空"><span class="hint" id="st-firstFrame"></span></div>
+    <div><div class="lbl-row"><label>尾帧图 last_frame_image</label><button class="up" data-kind="image" data-target="lastFrame">⬆</button></div><input id="lastFrame" placeholder="可空"><span class="hint" id="st-lastFrame"></span></div>
+    <div><label>model</label><input id="model"></div>
+    <div><label>seed</label><input id="seed" type="number" value="42"></div>
+    <div><label>duration（-1=自动）</label><input id="duration" type="number" value="-1"></div>
+    <div><label>aspect_ratio</label><select id="aspect"><option>adaptive</option><option>16:9</option><option>9:16</option><option>4:3</option><option>3:4</option><option>1:1</option><option>21:9</option></select></div>
+    <div><label>resolution</label><select id="resolution"><option>480p</option><option selected>720p</option><option>1080p</option></select></div>
+    <div><label>omni_reference_task_type</label><select id="taskType"><option selected>auto</option><option>edit</option><option>extend</option></select></div>
+    <div style="display:flex;align-items:end;gap:6px;padding-bottom:6px"><input id="audio" type="checkbox" checked><label for="audio">generate_audio</label></div>
+  </div>
+  <div class="row"><button id="gen" class="primary">▶ 提交生成</button><span id="genMsg" class="hint"></span></div>
+  <div id="genOut" hidden></div>
+</section>
+<section id="results">
+  <div class="bar">
+    <h3 style="margin:0">结果</h3>
+    <button id="pull">↻ 拉取</button>
+    <label><input id="auto" type="checkbox"> 每 10s 自动拉取</label>
+    <label>page <input id="pageIdx" type="number" value="0" style="width:60px"></label>
+    <label>每页 <input id="perPage" type="number" value="20" style="width:64px"></label>
+    <label><input id="onlyVideo" type="checkbox" checked> 只看有 unified_info 的</label>
+    <span id="pullMsg" class="hint"></span>
+  </div>
+  <div id="err"></div>
+  <div id="list"><div class="hint">填好 Authorization 后点「拉取」。</div></div>
+</section>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const LS = { get: (k, d) => { try { return localStorage.getItem('seedance_' + k) ?? d; } catch (_) { return d; } }, set: (k, v) => { try { localStorage.setItem('seedance_' + k, v); } catch (_) {} } };
+  // 持久化配置
+  const persist = { auth: '', orgType: 'workflow', orgId: '450026', appid: 'artifexres', model: 'ep-20260807163308-8j5km' };
+  for (const [id, dv] of Object.entries(persist)) { const el = $('#' + id); el.value = LS.get(id, dv); el.addEventListener('change', () => LS.set(id, el.value.trim())); }
+  const qs = () => `org_type=${encodeURIComponent($('#orgType').value.trim())}&org_id=${encodeURIComponent($('#orgId').value.trim())}&appid=${encodeURIComponent($('#appid').value.trim())}`;
+  const hdrs = () => { const h = {}; const a = $('#auth').value.trim(); if (a) h['X-Authorization'] = a; return h; };
+  const lines = id => $('#' + id).value.split('\n').map(x => x.trim()).filter(Boolean);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // ---- 生成 ----
+  $('#gen').onclick = async () => {
+    const body = {
+      prompt: $('#prompt').value,
+      model: $('#model').value.trim(),
+      reference_images: lines('refImgs'),
+      reference_videos: lines('refVids'),
+      first_frame_image: $('#firstFrame').value.trim() || null,
+      last_frame_image: $('#lastFrame').value.trim() || null,
+      duration: +$('#duration').value || -1,
+      aspect_ratio: $('#aspect').value,
+      resolution: $('#resolution').value,
+      generate_audio: $('#audio').checked,
+      seed: +$('#seed').value || 0,
+      omni_reference_task_type: $('#taskType').value,
+    };
+    $('#gen').disabled = true; $('#genMsg').textContent = '提交中…'; $('#genOut').hidden = true;
+    try {
+      const r = await fetch(`/artifex/api/v4/byteplus/seedance/gen?${qs()}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...hdrs() }, body: JSON.stringify(body) });
+      const text = await r.text();
+      let pretty = text; try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) {}
+      $('#genOut').hidden = false; $('#genOut').textContent = pretty.slice(0, 4000);
+      $('#genMsg').textContent = r.ok ? `已提交 (HTTP ${r.status})，稍后在右侧拉取结果` : `失败 HTTP ${r.status}`;
+      if (r.ok) setTimeout(pull, 1500);
+    } catch (e) { $('#genMsg').textContent = '请求异常：' + e.message; }
+    $('#gen').disabled = false;
+  };
+
+  // ---- 拉取结果 ----
+  async function pull() {
+    $('#pullMsg').textContent = '拉取中…'; $('#err').textContent = '';
+    try {
+      const r = await fetch(`/artifex/api/v4/generation/generated_images?page_index=${+$('#pageIdx').value || 0}&items_per_page=${+$('#perPage').value || 20}&${qs()}`, { headers: hdrs() });
+      const text = await r.text();
+      if (!r.ok) { $('#err').textContent = `HTTP ${r.status}\n` + text.slice(0, 1000); $('#pullMsg').textContent = ''; return; }
+      let j; try { j = JSON.parse(text); } catch (e) { $('#err').textContent = '返回不是 JSON（可能会话过期，跳去登录页了）：\n' + text.slice(0, 500); $('#pullMsg').textContent = ''; return; }
+      render(j);
+      $('#pullMsg').textContent = `更新于 ${new Date().toLocaleTimeString()}`;
+    } catch (e) { $('#err').textContent = '请求异常：' + e.message; $('#pullMsg').textContent = ''; }
+  }
+  function media(path) {
+    if (!path) return '';
+    const link = `<a href="${esc(path)}" target="_blank">${esc(path)}</a>`;
+    if (/\.(mp4|webm|mov)(\?|$)/i.test(path)) return link + `<video src="${esc(path)}" controls preload="metadata"></video>`;
+    if (/\.(png|jpe?g|webp|gif)(\?|$)/i.test(path)) return link + `<img src="${esc(path)}" alt="">`;
+    return link;
+  }
+  function render(j) {
+    let items = (j && j.info) || [];
+    if ($('#onlyVideo').checked) items = items.filter(it => it.unified_info != null);
+    $('#list').innerHTML = items.length ? items.map(it => `<div class="item">
+      <div class="head"><span class="st ${esc(it.status || '')}">${esc(it.status || '?')}</span></div>
+      ${media(it.path)}
+      <details ${it.status === 'done' ? '' : 'open'}><summary>unified_info</summary><pre>${esc(JSON.stringify(it.unified_info, null, 2))}</pre></details>
+    </div>`).join('') : '<div class="hint">没有条目。</div>';
+  }
+  // ---- 上传（经代理调 /api/v1/external_service/upload_image|upload_video，取返回 info.path）----
+  const picker = document.createElement('input'); picker.type = 'file'; picker.hidden = true; document.body.appendChild(picker);
+  async function uploadOne(file, kind) {
+    const fd = new FormData();
+    fd.append(kind === 'video' ? 'video' : 'image', file, file.name);
+    const r = await fetch(`/artifex/api/v1/external_service/upload_${kind === 'video' ? 'video' : 'image'}`, { method: 'POST', headers: hdrs(), body: fd });   // Content-Type 由浏览器带 boundary 自动生成
+    const text = await r.text();
+    let j; try { j = JSON.parse(text); } catch (_) { throw new Error(`HTTP ${r.status}: ${text.slice(0, 200)}`); }
+    if (!r.ok || !j.info || !j.info.path) throw new Error(`HTTP ${r.status}: ${text.slice(0, 200)}`);
+    return j.info;
+  }
+  /** 按 textarea 当前内容（每行一个 URL）重建缩略图条 */
+  function renderThumbs(target) {
+    const box = $('#th-' + target); if (!box) return;
+    const kind = target === 'refVids' ? 'video' : 'image';
+    box.innerHTML = '';
+    lines(target).forEach(u => {
+      const el = document.createElement(kind === 'video' ? 'video' : 'img');
+      el.src = u; el.title = u;
+      if (kind === 'video') { el.muted = true; el.preload = 'metadata'; }
+      el.addEventListener('error', () => { el.style.opacity = .3; el.style.outline = '1px solid var(--red)'; el.title = u + '（加载失败）'; });
+      box.appendChild(el);
+    });
+  }
+  ['refImgs', 'refVids'].forEach(id => $('#' + id).addEventListener('blur', () => renderThumbs(id)));
+  document.querySelectorAll('.up').forEach(btn => btn.onclick = () => {
+    const kind = btn.dataset.kind === 'video' ? 'video' : 'image', target = btn.dataset.target, multi = !!btn.dataset.multi;
+    picker.accept = kind === 'video' ? 'video/*' : 'image/*'; picker.multiple = multi; picker.value = '';
+    picker.onchange = async () => {
+      const files = [...picker.files]; if (!files.length) return;
+      const st = $('#st-' + target); btn.disabled = true;
+      for (let i = 0; i < files.length; i++) {
+        if (st) st.textContent = `上传中 ${i + 1}/${files.length}…`;
+        try {
+          const info = await uploadOne(files[i], kind);
+          const el = $('#' + target);
+          if (el.tagName === 'TEXTAREA') el.value = (el.value.trim() ? el.value.trim() + '\n' : '') + info.path;
+          else el.value = info.path;
+          el.dispatchEvent(new Event('change'));
+          if (el.tagName === 'TEXTAREA') renderThumbs(target);
+          if (st) st.textContent = `完成 ${i + 1}/${files.length}`;
+        } catch (e) { if (st) st.textContent = '失败：' + e.message; break; }
+      }
+      btn.disabled = false;
+    };
+    picker.click();
+  });
+
+  $('#pull').onclick = pull;
+  let timer = null;
+  $('#auto').addEventListener('change', () => { clearInterval(timer); if ($('#auto').checked) { pull(); timer = setInterval(pull, 10000); } });
+})();
+</script>
+</body></html>
