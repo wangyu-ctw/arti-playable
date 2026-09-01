@@ -8,6 +8,7 @@
  * 本地预览：http://localhost:8080/artifacts/<p>/build/index.html（视频 seek 需要支持 Range 的服务，如 serve.py）
  */
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, statSync, copyFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -46,18 +47,30 @@ html = html.replace(/<script src="([^"]+)"><\/script>/g, (_, src) => {
   return `<script>${rewrite(js)}\n</script>`;
 });
 html = rewrite(html);
-writeFileSync(join(out, 'index.html'), html);
 
-// 2) assets 整目录拷贝
-let assetBytes = 0, assetCount = 0;
-(function cp(from, to) {
+// 2) assets 整目录拷贝（每次全量重拷，覆盖同名替换）
+let assetBytes = 0, assetCount = 0; const assetFiles = [];
+(function cp(from, to, rel) {
   mkdirSync(to, { recursive: true });
   for (const f of readdirSync(from)) {
-    const a = join(from, f), b = join(to, f);
-    if (statSync(a).isDirectory()) cp(a, b);
-    else { copyFileSync(a, b); assetBytes += statSync(a).size; assetCount++; }
+    const a = join(from, f), b = join(to, f), r = rel ? rel + '/' + f : f;
+    if (statSync(a).isDirectory()) cp(a, b, r);
+    else { copyFileSync(a, b); assetBytes += statSync(a).size; assetCount++; assetFiles.push(r); }
   }
-})(assetDir, join(out, 'assets'));
+})(assetDir, join(out, 'assets'), '');
+
+// 3) 资源指纹：assets/<路径> → assets/<路径>?v=<内容hash8>，同名替换内容后缓存自动失效。
+//    spine/ 下的文件除外（atlas/图集路径由运行时从 src 推导，带查询串会破坏；且引用其一即整套加载）
+let hashed = 0;
+for (const r of assetFiles) {
+  if (r.startsWith('spine/')) continue;
+  const h = createHash('md5').update(readFileSync(join(out, 'assets', r))).digest('hex').slice(0, 8);
+  const before = html;
+  html = html.split(`assets/${r}`).join(`assets/${r}?v=${h}`);
+  if (html !== before) hashed++;
+}
+console.log(`  资源指纹：${hashed} 个被引用的资源已加 ?v=hash（spine/ 除外）`);
+writeFileSync(join(out, 'index.html'), html);
 
 const htmlKB = statSync(join(out, 'index.html')).size / 1024;
 console.log(`\nbuild/index.html：${htmlKB.toFixed(1)}KB（含全部代码内联）`);
