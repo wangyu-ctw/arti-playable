@@ -13,7 +13,7 @@ const args = process.argv.slice(2);
 const file = args.find(a => !a.startsWith('--'));
 if (!file) { console.error('用法：node utils/compress.mjs <视频路径> [--step 2] [--crf 强制档位]'); process.exit(1); }
 const getOpt = (name, dflt) => { const i = args.indexOf('--' + name); return i >= 0 ? +args[i + 1] : dflt; };
-const STEP = getOpt('step', 2), FORCE = getOpt('crf', null), START = 24, MAX = 42;
+const STEP = getOpt('step', 2), FORCE = getOpt('crf', null), W = getOpt('w', null), START = 24, MAX = 42;   // --w 540 = 缩宽到 540（记入状态，后续档位保持）
 
 const target = resolve(file);
 if (!existsSync(target)) { console.error('找不到', target); process.exit(1); }
@@ -25,12 +25,14 @@ const orig = join(origDir, name), stateFile = join(origDir, name + '.json');
 mkdirSync(origDir, { recursive: true });
 if (!existsSync(orig)) { copyFileSync(target, orig); console.log(`首次运行：原片已备份到 ${orig}`); }
 const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : { crf: null, pass: 0 };
-const crf = FORCE != null ? FORCE : (state.crf == null ? START : Math.min(state.crf + STEP, MAX));
+if (W != null) state.w = W || null;   // --w 0 可清除缩放
+const crf = FORCE != null ? FORCE : (state.crf == null ? START : Math.min(state.crf + (W != null ? 0 : STEP), MAX));   // 只改分辨率时不自动加档
 if (crf === state.crf && FORCE == null) console.log(`已到上限 CRF ${MAX}，再压请用 --crf 手动指定或降分辨率`);
 
 const tmp = join(dir, `.${name}.tmp.mp4`);
+const vf = state.w ? ['-vf', `scale=${state.w}:-2`] : [];
 const r = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', orig,
-  '-c:v', 'libx264', '-preset', 'veryslow', '-crf', String(crf), '-pix_fmt', 'yuv420p',
+  ...vf, '-c:v', 'libx264', '-preset', 'veryslow', '-crf', String(crf), '-pix_fmt', 'yuv420p',
   '-c:a', 'copy', '-movflags', '+faststart', tmp], { stdio: 'inherit' });
 if (r.status !== 0) { console.error('ffmpeg 失败'); process.exit(1); }
 
@@ -39,5 +41,5 @@ const before = kb(target), origKb = kb(orig);
 renameSync(tmp, target);
 state.crf = crf; state.pass++;
 writeFileSync(stateFile, JSON.stringify(state));
-console.log(`第 ${state.pass} 档 · CRF ${crf}：${before}KB → ${kb(target)}KB（原片 ${origKb}KB）`);
+console.log(`第 ${state.pass} 档 · CRF ${crf}${state.w ? ` · 宽 ${state.w}` : ''}：${before}KB → ${kb(target)}KB（原片 ${origKb}KB）`);
 console.log(`不满意画质回退：cp '${orig}' '${target}'（并删 originals/ 下的 ${basename(stateFile)} 重置档位）`);
