@@ -1,0 +1,135 @@
+{
+  "hud": {
+    "stage": "St.1-廢校",
+    "level": "Lv.{level}"
+  },
+  "dialogue": {
+    "xsx": "為了保護大家，我來死守這道防線！",
+    "gbl": "孝，辛苦你一直忍耐了！\n接下來我也會一起戰鬥！"
+  },
+  "character": {
+    "xsx": {
+      "name": "小室孝",
+      "description": "發射子彈，對命中的敵人造成傷害",
+      "skills": {
+        "0": {
+          "name": "子彈貫穿",
+          "description": "子彈傷害 +30%、貫穿次數 +1"
+        },
+        "1": {
+          "name": "發射數強化",
+          "description": "子彈彈道數 +1、子彈傷害 −20%"
+        },
+        "2": {
+          "name": "傷害強化",
+          "description": "射擊傷害 +60%"
+        },
+        "3": {
+          "name": "子彈連射",
+          "description": "每次射擊次數 +1、子彈傷害 −20%"
+        }
+      }
+    },
+    "gbl": {
+      "name": "宮本麗",
+      "description": "發射貫穿敵人的穿甲彈",
+      "skills": {
+        "0": {
+          "name": "強化槍管",
+          "description": "穿甲彈傷害 +30%、貫穿次數 +2"
+        },
+        "1": {
+          "name": "穿甲彈強化",
+          "description": "穿甲彈傷害 +60%"
+        },
+        "2": {
+          "name": "精密槍管",
+          "description": "穿甲彈的飛行速度 −30%、傷害 +50%、貫穿次數 +1"
+        },
+        "3": {
+          "name": "貫穿彈片",
+          "description": "穿甲彈首次命中後，分裂為 3 發貫穿彈片"
+        }
+      }
+    },
+    "gcsy": {
+      "name": "高城沙耶",
+      "description": "發射命中敵人時會爆炸的榴彈",
+      "skills": {
+        "0": {
+          "name": "衝擊強化",
+          "description": "榴彈的衝擊傷害 +80%、爆炸的擊退效果 +75%"
+        },
+        "1": {
+          "name": "榴彈改造",
+          "description": "榴彈冷卻時間 −10%、傷害 +20%"
+        },
+        "2": {
+          "name": "爆炸強化",
+          "description": "榴彈的爆炸傷害 +80%"
+        },
+        "3": {
+          "name": "範圍強化",
+          "description": "榴彈的爆炸範圍 +80%"
+        }
+      }
+    },
+    "jcjx": {
+      "name": "鞠川靜香",
+      "description": "召喚Humvee，衝撞敵人並使其減速",
+      "skills": {
+        "0": {
+          "name": "引擎強化",
+          "description": "Humvee 的速度 +15%、冷卻時間 −25%"
+        },
+        "1": {
+          "name": "Humvee強化",
+          "description": "Humvee 傷害 +60%"
+        },
+        "2": {
+          "name": "車庫擴充",
+          "description": "Humvee 出擊次數 +1、傷害 −20%"
+        },
+        "3": {
+          "name": "粉碎衝擊",
+          "description": "Humvee 的減速效果 +4 秒"
+        }
+      }
+    },
+    "pygt": {
+      "name": "平野耕太",
+      "description": "發射釘槍，爆炸後對範圍內的敵人造成傷害並賦予麻痺",
+      "skills": {
+        "0": {
+          "name": "釘槍強化",
+          "description": "釘槍傷害 +80%"
+        },
+        "1": {
+          "name": "釘槍爆炸",
+          "description": "當釘槍命中時，會產生小範圍爆炸"
+        },
+        "2": {
+          "name": "麻痺強化",
+          "description": "釘槍傷害 +30%、對敵人造成的麻痺時間 +1.5 秒"
+        },
+        "3": {
+          "name": "釘槍連射",
+          "description": "釘槍額外發動 1 次、釘槍傷害 −20%"
+        }
+      }
+    }
+  },
+  "draw": {
+    "title": "技能選擇",
+    "autoPick": "{s} 秒後自動選擇"
+  },
+  "boss": {
+    "incoming": "BOSS 來襲！"
+  },
+  "end": {
+    "title": "差一點就贏了！",
+    "sub": "BOSS 只剩一絲血，進入遊戲終結它",
+    "bossLeft": "BOSS 剩餘 {pct}%",
+    "cta": "立即體驗"
+  }
+}

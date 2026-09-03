@@ -1,0 +1,53 @@
+m.png
+size:2478,1300
+filter:Linear,Linear
+pma:true
+arm_L 1
+bounds:1172,393,274,427
+arm_L 2
+bounds:751,63,182,322
+arm_L 3
+bounds:2,2,140,111
+arm_R 1
+bounds:442,10,307,375
+arm_R 2
+bounds:1342,106,285,240
+rotate:90
+arm_R 3
+bounds:1851,675,177,145
+offsets:1,1,179,147
+body
+bounds:2032,2,444,911
+hair_L
+bounds:1584,62,244,143
+offsets:1,1,246,145
+hand_L 1 1
+bounds:1165,94,175,295
+hand_R 1 1
+bounds:1840,78,133,137
+offsets:1,1,135,139
+rotate:90
+hand_R 1 2
+bounds:935,85,228,304
+offsets:1,1,230,306
+head
+bounds:1448,404,401,416
+jacket_L
+bounds:1172,822,217,798
+rotate:90
+jacket_R
+bounds:1172,1041,257,801
+rotate:90
+jacket_neck
+bounds:1851,433,240,170
+rotate:90
+leg_L
+bounds:2,115,438,1183
+leg_R
+bounds:888,391,282,907
+shoes_L
+bounds:1584,207,195,254
+rotate:90
+shoes_R
+bounds:1851,213,169,218
+offsets:1,1,171,220

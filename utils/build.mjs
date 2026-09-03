@@ -48,6 +48,17 @@ html = html.replace(/<script src="([^"]+)"><\/script>/g, (_, src) => {
 });
 html = rewrite(html);
 
+// 1.5) src/i18n/*.json 拷入 build/i18n/（hotd-2 这类运行时 fetch 语言字典的项目；无此目录则跳过）
+try {
+  const i18nDir = join(srcDir, 'i18n');
+  const files = readdirSync(i18nDir).filter(f => f.endsWith('.json'));
+  if (files.length) {
+    mkdirSync(join(out, 'i18n'), { recursive: true });
+    for (const f of files) copyFileSync(join(i18nDir, f), join(out, 'i18n', f));
+    console.log(`  拷贝 i18n/ ${files.length} 个语言字典`);
+  }
+} catch (_) { /* 无 i18n 目录 */ }
+
 // 2) assets 整目录拷贝（每次全量重拷，覆盖同名替换）
 let assetBytes = 0, assetCount = 0; const assetFiles = [];
 (function cp(from, to, rel) {
