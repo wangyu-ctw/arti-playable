@@ -5,7 +5,8 @@
     "wall": "Barrier"
   },
   "dialogue": {
-    "xsx": "To protect everyone, I'll defend this barrier with my life!"
+    "xsx": "To protect everyone, I'll defend this barrier with my life!",
+    "gbl": "Takashi, you endured well!\nFrom here on, I'll fight alongside you!"
   },
   "character": {
     "xsx": {
