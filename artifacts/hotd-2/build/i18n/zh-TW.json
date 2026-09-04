@@ -2,7 +2,8 @@
   "hud": {
     "stage": "St.1-廢校",
     "level": "Lv.{level}",
-    "wall": "防線"
+    "wall": "防線",
+    "focusFire": "點擊集中火力"
   },
   "dialogue": {
     "xsx": "為了保護大家，我來死守這道防線！",
@@ -91,6 +92,9 @@
     "title": "差一點就贏了！",
     "sub": "BOSS 只剩一絲血，進入遊戲終結它",
     "bossLeft": "BOSS 剩餘 {pct}%",
-    "cta": "立即體驗"
+    "cta": "點擊免費遊玩",
+    "winTitle": "防守成功！",
+    "winSub": "你擊退了 BOSS！進入遊戲體驗更多戰鬥",
+    "noTap": "無需連點"
   }
 }
