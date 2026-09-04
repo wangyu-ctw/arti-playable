@@ -4,25 +4,16 @@
     "level": "Lv.{level}"
   },
   "dialogue": {
-    "xsx": "To protect everyone, I'll defend this barrier with my life!",
-    "gbl": "Takashi, you endured well!\nFrom here on, I'll fight alongside you!"
+    "xsx": "To protect everyone, I'll defend this barrier with my life!"
   },
   "character": {
     "xsx": {
       "name": "Hero",
       "description": "The protagonist of the game.",
       "skills": {
-        "0": {
-          "name": "Piercing Rounds",
-          "description": "Bullet damage +30%, pierce +1"
-        },
         "1": {
           "name": "Split Fire",
           "description": "+1 bullet trajectory, bullet damage -20%"
-        },
-        "2": {
-          "name": "Damage Boost",
-          "description": "Attack damage +60%"
         },
         "3": {
           "name": "Rapid Burst",
@@ -34,14 +25,6 @@
       "name": "Gun Blaster",
       "description": "Mock description for gbl.",
       "skills": {
-        "0": {
-          "name": "Reinforced Barrel",
-          "description": "AP round damage +30%, pierce +2"
-        },
-        "1": {
-          "name": "AP Boost",
-          "description": "AP round damage +60%"
-        },
         "2": {
           "name": "Precision Barrel",
           "description": "AP round speed -30%, damage +50%, pierce +1"
@@ -56,21 +39,13 @@
       "name": "Saya Takagi",
       "description": "Fires a grenade that explodes upon hit.",
       "skills": {
-        "0": {
-          "name": "Impact Boost",
-          "description": "Grenade impact damage +80%, explosion knockback +75%"
-        },
-        "1": {
-          "name": "Grenade Mod",
-          "description": "Grenade cooldown -10%, damage +20%"
-        },
-        "2": {
-          "name": "Blast Boost",
-          "description": "Grenade explosion damage +80%"
-        },
         "3": {
           "name": "Range Boost",
           "description": "Grenade explosion radius +80%"
+        },
+        "4": {
+          "name": "Grenade Volley",
+          "description": "Fires 1 extra grenade, grenade damage -20%"
         }
       }
     },
@@ -78,14 +53,6 @@
       "name": "Shizuka Marikawa",
       "description": "Summons a Hum-Vee to collide with enemies and slow them down.",
       "skills": {
-        "0": {
-          "name": "Engine Boost",
-          "description": "Humvee speed +15%, cooldown -25%"
-        },
-        "1": {
-          "name": "Humvee Boost",
-          "description": "Humvee damage +60%"
-        },
         "2": {
           "name": "Garage Expansion",
           "description": "+1 Humvee per launch, damage -20%"
@@ -100,14 +67,6 @@
       "name": "Kota Hirano",
       "description": "Fires an explosive Nail Gun, dealing DMG and Paralyzing enemies in the AoE.",
       "skills": {
-        "0": {
-          "name": "Nail Gun Boost",
-          "description": "Nail gun damage +80%"
-        },
-        "1": {
-          "name": "Explosive Nails",
-          "description": "Creates a small explosion on hit"
-        },
         "2": {
           "name": "Paralysis Boost",
           "description": "Nail gun damage +30%, paralysis duration +1.5s"
