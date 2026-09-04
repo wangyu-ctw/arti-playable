@@ -1,7 +1,8 @@
 {
   "hud": {
     "stage": "St.1-廃校",
-    "level": "Lv.{level}"
+    "level": "Lv.{level}",
+    "wall": "防壁"
   },
   "dialogue": {
     "xsx": "みんなを守るために、この防壁は俺が死守する！"

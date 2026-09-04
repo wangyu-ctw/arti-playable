@@ -1,7 +1,8 @@
 {
   "hud": {
     "stage": "St.1 - Ruined School",
-    "level": "Lv.{level}"
+    "level": "Lv.{level}",
+    "wall": "Barrier"
   },
   "dialogue": {
     "xsx": "To protect everyone, I'll defend this barrier with my life!"

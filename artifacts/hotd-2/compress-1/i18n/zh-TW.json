@@ -1,7 +1,8 @@
 {
   "hud": {
     "stage": "St.1-廢校",
-    "level": "Lv.{level}"
+    "level": "Lv.{level}",
+    "wall": "防線"
   },
   "dialogue": {
     "xsx": "為了保護大家，我來死守這道防線！"
