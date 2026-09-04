@@ -1,53 +1,52 @@
-m.png
-size:2478,1300
+m.webp
+size:912,398
 filter:Linear,Linear
-pma:true
 arm_L 1
-bounds:1172,393,274,427
+bounds:554,2,91,142
 arm_L 2
-bounds:751,63,182,322
+bounds:787,131,61,107
 arm_L 3
-bounds:2,2,140,111
+bounds:714,340,47,37
 arm_R 1
-bounds:442,10,307,375
+bounds:787,2,102,125
 arm_R 2
-bounds:1342,106,285,240
+bounds:554,148,95,80
 rotate:90
 arm_R 3
-bounds:1851,675,177,145
-offsets:1,1,179,147
+bounds:601,340,59,48
+offsets:0,0,60,49
 body
-bounds:2032,2,444,911
+bounds:304,2,148,304
 hair_L
-bounds:1584,62,244,143
-offsets:1,1,246,145
+bounds:516,340,81,48
+offsets:0,0,82,48
 hand_L 1 1
-bounds:1165,94,175,295
+bounds:852,131,58,98
 hand_R 1 1
-bounds:1840,78,133,137
-offsets:1,1,135,139
+bounds:664,340,44,46
+offsets:0,0,45,46
 rotate:90
 hand_R 1 2
-bounds:935,85,228,304
-offsets:1,1,230,306
+bounds:649,145,76,101
+offsets:0,0,77,102
 head
-bounds:1448,404,401,416
+bounds:649,2,134,139
 jacket_L
-bounds:1172,822,217,798
+bounds:152,310,72,266
 rotate:90
 jacket_R
-bounds:1172,1041,257,801
+bounds:554,250,86,267
 rotate:90
 jacket_neck
-bounds:1851,433,240,170
+bounds:852,233,80,57
 rotate:90
 leg_L
-bounds:2,115,438,1183
+bounds:2,2,146,394
 leg_R
-bounds:888,391,282,907
+bounds:456,2,94,302
 shoes_L
-bounds:1584,207,195,254
+bounds:825,317,65,85
 rotate:90
 shoes_R
-bounds:1851,213,169,218
-offsets:1,1,171,220
+bounds:456,308,56,73
+offsets:0,0,57,73
