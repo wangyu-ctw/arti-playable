@@ -2,7 +2,8 @@
   "hud": {
     "stage": "St.1 - Ruined School",
     "level": "Lv.{level}",
-    "wall": "Barrier"
+    "wall": "Barrier",
+    "focusFire": "Tap to focus fire!"
   },
   "dialogue": {
     "xsx": "To protect everyone, I'll defend this barrier with my life!",
@@ -91,6 +92,9 @@
     "title": "So close!",
     "sub": "The boss has a sliver of HP left — finish it in the game!",
     "bossLeft": "Boss HP {pct}%",
-    "cta": "Play Now"
+    "cta": "Tap to Play Free",
+    "winTitle": "Defense Success!",
+    "winSub": "You drove off the boss! Play the full game for more",
+    "noTap": "No tapping needed"
   }
 }
