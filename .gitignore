@@ -4,10 +4,13 @@ node_modules/
 *.log
 
 # artifacts：只入库各项目的打包产物 build/；src（工作区）与 assets（素材源）不上传
+# compress-1/ 等分支产物镜像目录同样入库（main 上挂独立预览链接用）
 /artifacts/**
 !/artifacts/*/
 !/artifacts/*/build/
 !/artifacts/*/build/**
+!/artifacts/*/compress-*/
+!/artifacts/*/compress-*/**
 
 # IDE / agent 本地配置与临时目录
 .idea/
