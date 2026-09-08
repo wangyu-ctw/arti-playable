@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <title>Seedance ×OpenRouter 视频生成</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- 与 utils/seedance.html 表单逐项一致（提示词/参考图/参考视频/首尾帧/model/seed/duration/aspect/resolution/
+     omni_reference_task_type/generate_audio），但调用走 OpenRouter 视频 API：
+     POST /api/v1/videos（异步）→ GET /videos/{id} 轮询 → unsigned_urls 播放。
+     模型锁定 bytedance/seedance-2.5，不调用其他模型。key 与 audio.html 共用 localStorage["openrouter_key"]。
+     映射：reference_images/videos → input_references（image_url/video_url，Seedance 2+ 支持视频引用）；
+     首尾帧 → frame_images（填了即图生视频，优先于参考）；duration=-1 原样传（Seedance 编辑类任务要求显式 -1=跟随输入视频），0/空不传；aspect=adaptive 不传；
+     omni_reference_task_type ≠ auto 时经 provider.options.byteplus 透传，OpenRouter 拒收则自动去掉重试并提示。 -->
 <style>
   :root { --bg:#0f1115; --panel:#161a20; --line:#262b33; --fg:#e6e9ee; --dim:#8b93a1; --acc:#4da3ff; --ok:#7ee787; --err:#ff7b72; --warn:#ffb648; }
   * { box-sizing:border-box; }
@@ -17,21 +24,20 @@
   label { font-size:13px; color:var(--dim); }
   input[type=text], input[type=password], input[type=number], select, textarea {
     background:#0d1014; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; }
-  textarea { width:100%; min-height:100px; resize:vertical; }
+  textarea { width:100%; resize:vertical; }
   button { background:var(--acc); color:#04121f; border:0; border-radius:6px; padding:8px 18px; font:inherit; font-weight:600; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   button.ghost { background:#232936; color:var(--fg); font-weight:normal; padding:5px 10px; }
-  .thumbs { display:flex; gap:8px; flex-wrap:wrap; }
-  .thumbs .th { position:relative; width:84px; height:84px; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
-  .thumbs img { width:100%; height:100%; object-fit:cover; display:block; }
-  .thumbs .rm { position:absolute; top:2px; right:2px; background:rgba(0,0,0,.7); color:#fff; border:0; border-radius:4px; padding:0 6px; cursor:pointer; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:end; margin:6px 0; }
+  .thumbs { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0; }
+  .thumbs img, .thumbs video { height:48px; border-radius:6px; background:#000; border:1px solid var(--line); }
   .card { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:10px; }
   .card .meta { color:var(--dim); font-size:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .badge { padding:1px 10px; border-radius:999px; font-size:12px; background:#232936; }
   .badge.processing, .badge.pending { color:var(--warn); }
   .badge.completed { color:var(--ok); }
   .badge.failed { color:var(--err); }
-  .card video { width:100%; max-height:420px; margin-top:8px; background:#000; border-radius:6px; }
+  .card video.out { width:100%; max-height:420px; margin-top:8px; background:#000; border-radius:6px; }
   .err { color:var(--err); white-space:pre-wrap; }
   a { color:var(--acc); }
 </style>
@@ -39,60 +45,48 @@
 <body>
 <header>
   <b>🎬 Seedance ×OpenRouter</b>
-  <span class="hint">POST /api/v1/videos 异步生成，本页自动轮询拉结果；key 与 audio 工具共用 localStorage["openrouter_key"]</span>
+  <label>OpenRouter Key <input id="key" type="password" style="width:320px" placeholder="sk-or-v1-…"></label>
+  <button class="ghost" id="keyEye">显示</button>
+  <span class="hint" id="keyMsg">与 audio 工具共用 localStorage["openrouter_key"]</span>
 </header>
 <main>
-  <div class="blk">
-    <div class="row">
-      <label>OpenRouter Key</label>
-      <input id="key" type="password" placeholder="sk-or-v1-…" style="flex:1;min-width:260px">
-      <button class="ghost" id="keyEye">显示</button>
-      <span class="hint" id="keyMsg"></span>
+  <section class="blk" id="form">
+    <h3 style="margin:4px 0">生成（seedance 2.5）</h3>
+    <label>提示词</label>
+    <textarea id="prompt" rows="4" placeholder="将视频中的人物换成图片中的"></textarea>
+    <div class="row"><label style="flex:1">参考图 reference_images（每行一个 URL，可空）</label><button class="ghost up" data-kind="image" data-target="refImgs" data-multi="1">⬆ 上传图片</button><span class="hint" id="st-refImgs"></span></div>
+    <textarea id="refImgs" rows="2"></textarea>
+    <div class="thumbs" id="th-refImgs"></div>
+    <div class="row"><label style="flex:1">参考视频 reference_videos（每行一个 URL，可空）</label><button class="ghost up" data-kind="video" data-target="refVids" data-multi="1">⬆ 上传视频</button><span class="hint" id="st-refVids"></span></div>
+    <textarea id="refVids" rows="2"></textarea>
+    <div class="thumbs" id="th-refVids"></div>
+    <div class="grid2">
+      <div><div class="row" style="margin:0"><label style="flex:1">首帧图 first_frame_image</label><button class="ghost up" data-kind="image" data-target="firstFrame">⬆</button></div><input id="firstFrame" type="text" placeholder="可空" style="width:100%"><span class="hint" id="st-firstFrame"></span></div>
+      <div><div class="row" style="margin:0"><label style="flex:1">尾帧图 last_frame_image</label><button class="ghost up" data-kind="image" data-target="lastFrame">⬆</button></div><input id="lastFrame" type="text" placeholder="可空" style="width:100%"><span class="hint" id="st-lastFrame"></span></div>
+      <div><label>model</label><input id="model" type="text" value="bytedance/seedance-2.5" readonly style="width:100%;opacity:.7" title="固定走 OpenRouter 的 Seedance 2.5，不调用其他模型"></div>
+      <div><label>seed</label><input id="seed" type="number" value="42" style="width:100%"></div>
+      <div><label>duration（-1=自动）</label><input id="duration" type="number" value="-1" style="width:100%"></div>
+      <div><label>aspect_ratio</label><select id="aspect" style="width:100%"><option>adaptive</option><option>16:9</option><option>9:16</option><option>4:3</option><option>3:4</option><option>1:1</option><option>21:9</option></select></div>
+      <div><label>resolution</label><select id="resolution" style="width:100%"><option>480p</option><option selected>720p</option><option>1080p</option></select></div>
+      <div><label>omni_reference_task_type</label><select id="taskType" style="width:100%"><option selected>auto</option><option>edit</option><option>extend</option></select></div>
+      <div style="display:flex;align-items:center;gap:6px"><input id="audio" type="checkbox" checked><label for="audio">generate_audio</label></div>
     </div>
-    <div class="row">
-      <label>模型</label>
-      <select id="model" style="min-width:260px"></select>
-      <label>时长</label><select id="dur"></select><span class="hint">s</span>
-      <label>分辨率</label><select id="res"></select>
-      <label>画幅</label><select id="ar"></select>
-      <label><input id="audio" type="checkbox" checked> 生成音频</label>
-    </div>
-    <div class="row"><span class="hint" id="modelHint"></span></div>
-  </div>
+    <div class="row hint">上传按钮把本地文件转为 data URL 填入（OpenRouter 无上传接口）；duration=-1 会原样传给 Seedance（编辑类任务必须 -1=跟随输入视频）、adaptive 不传画幅；omni_reference_task_type ≠ auto 时经 provider 透传，被拒会自动去掉重试并提示；OpenRouter 的 2.5 分辨率仅 480p/720p（1080p 按 artifex 版保留，选了 API 会明确拒绝）。</div>
+    <div class="row"><button id="go">▶ 提交生成</button><span id="genMsg" class="hint"></span></div>
+  </section>
 
-  <div class="blk">
-    <div class="row"><label style="width:100%">提示词</label></div>
-    <textarea id="prompt" placeholder="镜头语言 + 画面描述…（Seedance 2.5 支持中文/日文/英文提示词）"></textarea>
-    <div class="row">
-      <label>首帧</label><input id="firstF" type="file" accept="image/*"><button class="ghost" id="firstClr" hidden>✕</button>
-      <label>尾帧</label><input id="lastF" type="file" accept="image/*"><button class="ghost" id="lastClr" hidden>✕</button>
-      <span class="hint">（填了首/尾帧 = 图生视频，参考图将被忽略）</span>
-    </div>
-    <div class="row thumbs" id="frameThumbs"></div>
-    <div class="row">
-      <label>参考图（可多张，风格/主体参考）</label>
-      <input id="refFile" type="file" accept="image/*" multiple>
-    </div>
-    <div class="thumbs" id="refThumbs"></div>
-    <div class="row hint">参考视频 / omni_reference_task_type 是 artifex 版专属能力，OpenRouter 的 Seedance 暂不支持（要用请回 seedance.html）</div>
-    <div class="row">
-      <label>seed</label><input id="seed" type="number" style="width:130px" placeholder="随机">
-      <span style="flex:1"></span>
-      <button id="go">提交生成</button>
-    </div>
-  </div>
-
-  <div class="blk">
-    <b>生成区</b><span class="hint">（任务存 localStorage，刷新页面自动恢复轮询；每 5s 拉一次状态）</span>
+  <section class="blk">
+    <b>生成区</b><span class="hint">（提交后 3s 首拉、每 5s 轮询；任务存 localStorage，刷新自动恢复）</span>
     <div id="jobs"><div class="hint">还没有任务。</div></div>
-  </div>
+  </section>
 </main>
 <script>
 (() => {
   const $ = s => document.querySelector(s);
   const API = 'https://openrouter.ai/api/v1';
-  const KEY = 'openrouter_key';                       // 与 audio.html 共用
+  const KEY = 'openrouter_key';
   const JOBS_LS = 'seedance2_jobs';
+  const MODEL = 'bytedance/seedance-2.5';
 
   // ---- key ----
   $('#key').value = localStorage.getItem(KEY) || '';
@@ -100,51 +94,36 @@
   $('#keyEye').onclick = () => { const k = $('#key'); k.type = k.type === 'password' ? 'text' : 'password'; $('#keyEye').textContent = k.type === 'password' ? '显示' : '隐藏'; };
   const auth = () => ({ Authorization: 'Bearer ' + ($('#key').value || '').trim(), 'Content-Type': 'application/json', 'X-Title': 'arti-playable seedance2' });
 
-  // ---- 模型与能力（线上拉取，seedance 靠前；时长/分辨率/画幅按所选模型的支持范围联动）----
-  let models = [{ id: 'bytedance/seedance-2.5', supported_durations: [4,5,6,7,8,9,10,15,20,30], supported_resolutions: ['480p','720p'], supported_aspect_ratios: ['16:9','4:3','1:1','3:4','9:16','21:9'] }];
-  const fillSel = (el, arr, cur) => { el.innerHTML = (arr || []).map(v => `<option>${v}</option>`).join(''); if (arr && arr.includes(cur)) el.value = cur; };
-  function syncCaps() {
-    const m = models.find(x => x.id === $('#model').value) || models[0];
-    fillSel($('#dur'), m.supported_durations || [5], $('#dur').value);
-    fillSel($('#res'), m.supported_resolutions || ['720p'], $('#res').value || '720p');
-    fillSel($('#ar'), m.supported_aspect_ratios || ['9:16'], $('#ar').value || '9:16');
-    const p = m.pricing_skus || {};
-    $('#modelHint').textContent = Object.keys(p).length ? ('计价: ' + Object.entries(p).slice(0, 3).map(([k, v]) => `${k}=$${v}`).join(' · ')) : '';
-  }
-  function renderModels() {
-    const cur = $('#model').value;
-    $('#model').innerHTML = models.map(m => `<option>${m.id}</option>`).join('');
-    $('#model').value = models.some(m => m.id === cur) ? cur : (models.find(m => /seedance-2\.5/.test(m.id)) || models[0]).id;
-    syncCaps();
-  }
-  $('#model').onchange = syncCaps;
-  renderModels();
-  fetch(API + '/videos/models').then(r => r.json()).then(j => {
-    const all = (j.data || []);
-    all.sort((a, b) => (/seedance/.test(b.id) ? 1 : 0) - (/seedance/.test(a.id) ? 1 : 0) || a.id.localeCompare(b.id));
-    if (all.length) { models = all; renderModels(); }
-  }).catch(() => {});
-
-  // ---- 图片上传 ----
+  // ---- 上传（→ data URL 填入目标输入框/文本域）与缩略图 ----
   const file2dataURL = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
-  let firstImg = null, lastImg = null; const refs = [];
-  const bindFrame = (inputId, clrId, set) => {
-    $(inputId).addEventListener('change', async e => { const f = e.target.files[0]; set(f ? await file2dataURL(f) : null); $(clrId).hidden = !f; renderFrames(); });
-    $(clrId).onclick = () => { set(null); $(inputId).value = ''; $(clrId).hidden = true; renderFrames(); };
-  };
-  bindFrame('#firstF', '#firstClr', v => firstImg = v);
-  bindFrame('#lastF', '#lastClr', v => lastImg = v);
-  function renderFrames() {
-    $('#frameThumbs').innerHTML = (firstImg ? `<div class="th" title="首帧"><img src="${firstImg}"></div>` : '') + (lastImg ? `<div class="th" title="尾帧"><img src="${lastImg}"></div>` : '');
+  const lines = id => $('#' + id).value.split('\n').map(s => s.trim()).filter(Boolean);
+  function renderThumbs(id) {
+    const th = $('#th-' + id); if (!th) return;
+    const kind = th.previousElementSibling && th.previousElementSibling.id === id && /Vids/.test(id) ? 'video' : (/Vids/.test(id) ? 'video' : 'image');
+    th.innerHTML = lines(id).map(u => /Vids/.test(id) ? `<video src="${u}" muted></video>` : `<img src="${u}">`).join('');
   }
-  $('#refFile').addEventListener('change', async e => { for (const f of e.target.files) refs.push(await file2dataURL(f)); e.target.value = ''; renderRefs(); });
-  function renderRefs() {
-    $('#refThumbs').innerHTML = refs.map((u, i) => `<div class="th"><img src="${u}"><button class="rm" data-i="${i}">✕</button></div>`).join('');
-    $('#refThumbs').querySelectorAll('.rm').forEach(b => b.onclick = () => { refs.splice(+b.dataset.i, 1); renderRefs(); });
-  }
+  ['refImgs', 'refVids'].forEach(id => { $('#' + id).addEventListener('blur', () => renderThumbs(id)); });
+  document.querySelectorAll('.up').forEach(btn => {
+    btn.onclick = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = btn.dataset.kind === 'video' ? 'video/*' : 'image/*';
+      if (btn.dataset.multi) input.multiple = true;
+      input.onchange = async () => {
+        const st = $('#st-' + btn.dataset.target); if (st) st.textContent = '读取中…';
+        const urls = [];
+        for (const f of input.files) urls.push(await file2dataURL(f));
+        const tgt = $('#' + btn.dataset.target);
+        if (tgt.tagName === 'TEXTAREA') { tgt.value = (tgt.value.trim() ? tgt.value.trim() + '\n' : '') + urls.join('\n'); renderThumbs(btn.dataset.target); }
+        else tgt.value = urls[0] || '';
+        if (st) st.textContent = urls.length ? `已填入 ${urls.length} 个` : '';
+      };
+      input.click();
+    };
+  });
 
-  // ---- 任务：提交 / 轮询（5s）/ 恢复 ----
-  const jobs = JSON.parse(localStorage.getItem(JOBS_LS) || '[]');   // [{id, model, prompt, ts, status, url?, error?}]
+  // ---- 任务卡片 / 轮询（提交后 3s 首拉，全局每 5s）----
+  const jobs = JSON.parse(localStorage.getItem(JOBS_LS) || '[]');
   const saveJobs = () => localStorage.setItem(JOBS_LS, JSON.stringify(jobs.slice(0, 30)));
   function jobCard(j) {
     let el = document.querySelector(`.card[data-id="${j.id}"]`);
@@ -154,10 +133,10 @@
       $('#jobs').prepend(el);
     }
     el.innerHTML = `<div class="meta"><span class="badge ${j.status}">${j.status}</span><span>${j.model}</span>
-      <span>${new Date(j.ts).toLocaleTimeString()}</span><span style="flex:1"></span>
+      <span>${new Date(j.ts).toLocaleTimeString()}</span>${j.note ? `<span class="hint">${j.note}</span>` : ''}<span style="flex:1"></span>
       <button class="ghost rf">立即刷新</button></div>
       <div class="hint" style="margin-top:4px">${(j.prompt || '').slice(0, 120)}</div>
-      ${j.status === 'completed' && j.url ? `<video controls playsinline src="${j.url}"></video><div><a href="${j.url}" target="_blank">在新窗口打开 / 右键另存</a></div>` : ''}
+      ${j.status === 'completed' && j.url ? `<video class="out" controls playsinline src="${j.url}"></video><div><a href="${j.url}" target="_blank">在新窗口打开 / 右键另存</a></div>` : ''}
       ${j.status === 'failed' ? `<div class="err">${j.error || '生成失败'}</div>` : ''}`;
     el.querySelector('.rf').onclick = () => poll(j, true);
     return el;
@@ -171,37 +150,59 @@
       j.status = s.status || j.status;
       if (s.status === 'completed') j.url = (s.unsigned_urls && s.unsigned_urls[0]) || j.url;
       if (s.status === 'failed') j.error = typeof s.error === 'string' ? s.error : JSON.stringify(s.error || '');
-    } catch (e) { if (manual) { j.error = e.message; } }
+    } catch (e) { if (manual) j.error = e.message; }
     saveJobs(); jobCard(j);
   }
   setInterval(() => { jobs.filter(j => j.status !== 'completed' && j.status !== 'failed').forEach(j => poll(j)); }, 5000);
-  jobs.forEach(j => { jobCard(j); poll(j); });   // 恢复历史并立即拉一次
+  jobs.forEach(j => { jobCard(j); poll(j); });
 
+  // ---- 提交（表单 → OpenRouter /videos 请求体）----
+  function buildBody() {
+    const body = { model: MODEL, prompt: $('#prompt').value.trim(), generate_audio: $('#audio').checked };
+    if ($('#seed').value !== '') body.seed = Math.round(+$('#seed').value);
+    const dur = Math.round(+$('#duration').value);
+    if (dur > 0) body.duration = dur;
+    // -1：顶层数字/字符串都被 OpenRouter 校验(4~30)拦下 → 塞进 provider 透传（byteplus/bytedance 两个 slug 都放，只有匹配的会被转发）
+    const pp = {};
+    if (dur === -1) pp.duration = -1;
+    if ($('#aspect').value !== 'adaptive') body.aspect_ratio = $('#aspect').value;
+    body.resolution = $('#resolution').value;
+    const frames = [];
+    if ($('#firstFrame').value.trim()) frames.push({ type: 'image_url', image_url: { url: $('#firstFrame').value.trim() }, frame_type: 'first_frame' });
+    if ($('#lastFrame').value.trim()) frames.push({ type: 'image_url', image_url: { url: $('#lastFrame').value.trim() }, frame_type: 'last_frame' });
+    if (frames.length) body.frame_images = frames;
+    const refs = [
+      ...lines('refImgs').map(u => ({ type: 'image_url', image_url: { url: u } })),
+      ...lines('refVids').map(u => ({ type: 'video_url', video_url: { url: u } })),   // Seedance 2+ 支持视频引用
+    ];
+    if (refs.length) body.input_references = refs;
+    if ($('#taskType').value !== 'auto') pp.omni_reference_task_type = $('#taskType').value;
+    if (Object.keys(pp).length) body.provider = { options: { byteplus: { parameters: pp }, bytedance: { parameters: pp } } };
+    return body;
+  }
   $('#go').onclick = async () => {
     const key = ($('#key').value || '').trim();
     if (!key) return alert('先填 OpenRouter Key（sk-or-v1-…）');
-    const prompt = $('#prompt').value.trim();
-    if (!prompt) return alert('提示词不能为空');
-    const body = {
-      model: $('#model').value, prompt,
-      duration: +$('#dur').value, resolution: $('#res').value, aspect_ratio: $('#ar').value,
-      generate_audio: $('#audio').checked,
-    };
-    if ($('#seed').value !== '') body.seed = Math.round(+$('#seed').value);
-    const frames = [];
-    if (firstImg) frames.push({ type: 'image_url', image_url: { url: firstImg }, frame_type: 'first_frame' });
-    if (lastImg) frames.push({ type: 'image_url', image_url: { url: lastImg }, frame_type: 'last_frame' });
-    if (frames.length) body.frame_images = frames;
-    else if (refs.length) body.input_references = refs.map(u => ({ type: 'image_url', image_url: { url: u } }));
-    $('#go').disabled = true;
+    if (!$('#prompt').value.trim()) return alert('提示词不能为空');
+    const msg = $('#genMsg');
+    $('#go').disabled = true; msg.textContent = '提交中…';
+    let note = '';
     try {
-      const r = await fetch(API + '/videos', { method: 'POST', headers: auth(), body: JSON.stringify(body) });
-      const s = await r.json();
+      let body = buildBody();
+      let r = await fetch(API + '/videos', { method: 'POST', headers: auth(), body: JSON.stringify(body) });
+      let s = await r.json().catch(() => ({}));
+      if (!r.ok && body.provider && /parameter|passthrough|provider/i.test(JSON.stringify(s.error || ''))) {
+        note = 'omni_reference_task_type 被 OpenRouter 拒收，已去掉后重试';   // 透传被拒 → 去掉重试
+        delete body.provider;
+        r = await fetch(API + '/videos', { method: 'POST', headers: auth(), body: JSON.stringify(body) });
+        s = await r.json().catch(() => ({}));
+      }
       if (!r.ok || !s.id) throw new Error(s.error && (s.error.message || JSON.stringify(s.error)) || ('HTTP ' + r.status));
-      const j = { id: s.id, model: body.model, prompt, ts: Date.now(), status: s.status || 'pending' };
+      const j = { id: s.id, model: MODEL, prompt: body.prompt, ts: Date.now(), status: s.status || 'pending', note };
       jobs.unshift(j); saveJobs(); jobCard(j);
-      setTimeout(() => poll(j), 3000);   // 提交后 3s 先拉一次，之后进 5s 轮询
-    } catch (e) { alert('提交失败：' + e.message); }
+      msg.textContent = '已提交 ' + s.id + (note ? '（' + note + '）' : '');
+      setTimeout(() => poll(j), 3000);
+    } catch (e) { msg.textContent = ''; alert('提交失败：' + e.message); }
     finally { $('#go').disabled = false; }
   };
 })();

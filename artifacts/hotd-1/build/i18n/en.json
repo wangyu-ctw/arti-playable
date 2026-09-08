@@ -1,32 +1,117 @@
 {
   "tracks": {
     "s01": {
-      "text": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+      "text": [
+        "*This 3D footage is an advertising visualization and does not represent actual in-game content."
+      ]
     },
     "s02": {
-      "text": ["Choose your route"],
-      "text_up": ["Go upstairs", { "text": "Search for survivors", "size": 26 }],
-      "text_down": { "dx": -150, "lines": ["Escape", { "text": "Break for the exit", "size": 24 }] },
-      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+      "text": [
+        "Choose your route"
+      ],
+      "text_up": [
+        "Go upstairs",
+        {
+          "text": "Search for survivors",
+          "size": 26
+        }
+      ],
+      "text_down": {
+        "lines": [
+          "Escape",
+          {
+            "text": "Break for the exit",
+            "size": 21
+          }
+        ],
+        "dx": -10,
+        "dy": -1.2,
+        "scale": 1.1475,
+        "quad": [
+          -9.1,
+          -3.9,
+          -25,
+          -4.6,
+          68.4,
+          5.9,
+          -29.4,
+          5.3
+        ]
+      },
+      "notice": [
+        "*This 3D footage is an advertising visualization and does not represent actual in-game content."
+      ],
+      "text_2": [
+        "Survivor",
+        "Lv.17"
+      ]
     },
     "s03": {
-      "救救我": ["HELP!"],
-      "有人吗": ["Anyone?"],
-      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+      "救救我": [
+        "HELP!"
+      ],
+      "有人吗": [
+        "Anyone?"
+      ],
+      "notice": [
+        "*This 3D footage is an advertising visualization and does not represent actual in-game content."
+      ],
+      "text_2": [
+        "Survivor",
+        "Lv.17"
+      ]
     },
     "s04": {
-      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+      "notice": [
+        "*This 3D footage is an advertising visualization and does not represent actual in-game content."
+      ],
+      "text_2": [
+        "Survivor",
+        "Lv.17"
+      ]
     },
     "s05": {
-      "text": ["The TV anime \"HOTD\"", "is now a game, 15 years later!"],
-      "text_2": ["\"They\" are coming——"],
-      "text_3": ["A survival tower defense game", "set at the dawn of hell."],
-      "text_4": ["Start now and get"],
-      "text_5": ["about ¥90,000 worth", "of items for free!"],
-      "text_6": ["Play Now!"],
-      "text_7": ["\"They\" are attacking!", "Survive this hell!"],
-      "text_8": ["Tap to open the door"],
-      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+      "text": {
+        "lines": [
+          "The TV anime \"HOTD\"",
+          "is now a game, after 15 years!"
+        ],
+        "dx": -12.8,
+        "dy": -1.7,
+        "scale": 0.9238
+      },
+      "text_2": [
+        "\"They\" are coming——"
+      ],
+      "text_3": [
+        "A survival tower defense game",
+        "set at the dawn of hell."
+      ],
+      "text_4": [
+        "Start now and get"
+      ],
+      "text_5": [
+        "about ¥90,000 worth",
+        "of items for free!"
+      ],
+      "text_6": [
+        "Play Now!"
+      ],
+      "text_7": {
+        "lines": [
+          "\"They\" are attacking!",
+          "Survive this hell!"
+        ],
+        "dx": -20.5,
+        "dy": 14.5,
+        "scale": 0.6413
+      },
+      "text_8": [
+        "Tap to open the door"
+      ],
+      "notice": [
+        "*This 3D footage is an advertising visualization and does not represent actual in-game content."
+      ]
     }
   }
 }

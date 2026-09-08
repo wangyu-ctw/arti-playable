@@ -18,4 +18,4 @@
 - `audio.html` — OpenRouter 音频生成页：Google Lyria 3（音乐，文+图输入）/ OpenAI gpt-audio（语音，文+音频输入），key 存 localStorage["openrouter_key"]。
 - `build.mjs` — 打包构建：`node utils/build.mjs <projectname>` → `artifacts/<p>/build/` = 单个 index.html（全部 CSS/JS 压缩内联，../assets 改写为 assets/）+ assets/ 整目录，可直接分发/托管。
 - `compress.mjs` — 视频增量压缩：`node utils/compress.mjs <视频>`，每跑一次 CRF +2（永远从 .orig/ 原片重编码，无叠加损失）；回退 = 用 .orig 覆盖回去。
-- `seedance2.html` — Seedance ×OpenRouter 视频生成台：POST /api/v1/videos 异步提交 + 5s 轮询拉结果（任务存 localStorage 可恢复）；模型/时长/分辨率/画幅按 /videos/models 联动；首尾帧→frame_images、参考图→input_references；key 共用 localStorage["openrouter_key"]。
+- `seedance2.html` — Seedance ×OpenRouter 视频生成台：表单与 seedance.html 逐项一致（含参考视频、omni_reference_task_type），模型锁定 bytedance/seedance-2.5；POST /api/v1/videos 异步提交 + 3s 首拉/5s 轮询（任务存 localStorage 可恢复）；参考图/视频→input_references、首尾帧→frame_images、-1/adaptive 不传、omni 走 provider 透传被拒自动重试；key 共用 localStorage["openrouter_key"]。

@@ -406,7 +406,14 @@
               const kf0 = keysOf(sc.id, name);
               wrap._staticQuad = opts.quad || null;
               const q0 = (kf0 && kf0[0] && kf0[0].quad) || opts.quad; if (q0) applyQuad(wrap, q0);
-              setPose(wrap, (kf0 && kf0[0]) || opts.pose || { x: 0, y: 0, s: 1 });
+              let pose0 = (kf0 && kf0[0]) || opts.pose || { x: 0, y: 0, s: 1 };
+              if (opts.alignX === 'right') {   // 右对齐：全部关键帧的 x 由「舞台右缘 − 边距 − 半宽×该帧缩放」接管（语言无关，补间也保持）
+                const m = opts.alignMargin != null ? opts.alignMargin : 12;
+                const ax = sc0 => Math.round((STAGE.w / 2 - m - (+wrap.dataset.w * (sc0 != null ? sc0 : 1)) / 2) * 10) / 10;
+                (kf0 || []).forEach(k => { k.x = ax(k.s); });
+                pose0 = { ...pose0, x: ax(pose0.s) };
+              }
+              setPose(wrap, pose0);
               wrap.style.visibility = wrap._winIn ? 'hidden' : '';
               return res(wrap);
             }
@@ -453,11 +460,11 @@
       /** 按 tracks.js 里本场景的 layers 列表创建全部素材轨道（顺序=叠放顺序），素材尺寸就绪后 resolve，返回 wrap 数组 */
       async mountLayers() {
         const layers = sceneData(sc.id).layers, wraps = [];
-        layers.filter(L => !L.follow).forEach(L => wraps.push(ctx.sprite(L.src, { track: L.name, loop: L.loop, sound: L.sound, hidden: L.hidden, winIn: L.in, fx: L.fx, quad: L.quad,textSpans: L.type === 'text' ? (L.spans || []) : undefined, rectSpec: L.type === 'rect' ? { color: L.color, w: L.rectW, h: L.rectH } : undefined, spineSpec: L.type === 'spine' ? { anim: L.anim, loop: L.loop } : undefined, lightSpec: L.type === 'light' ? { inner: L.inner, feather: L.feather, edge: L.edge, rx: L.rx, ry: L.ry, color: L.color } : undefined })));
+        layers.filter(L => !L.follow).forEach(L => wraps.push(ctx.sprite(L.src, { track: L.name, loop: L.loop, sound: L.sound, hidden: L.hidden, winIn: L.in, fx: L.fx, quad: L.quad,textSpans: L.type === 'text' ? (L.spans || []) : undefined, alignX: L.alignX, alignMargin: L.alignMargin, rectSpec: L.type === 'rect' ? { color: L.color, w: L.rectW, h: L.rectH } : undefined, spineSpec: L.type === 'spine' ? { anim: L.anim, loop: L.loop } : undefined, lightSpec: L.type === 'light' ? { inner: L.inner, feather: L.feather, edge: L.edge, rx: L.rx, ry: L.ry, color: L.color } : undefined })));
         layers.filter(L => L.follow).forEach(L => {
           const pw = root.querySelector(`.track[data-track="${L.follow}"]`);
           if (!pw) emit({ type: 'warn', msg: `图层 ${L.name} 的跟随目标 ${L.follow} 不存在，按普通层挂载` });
-          wraps.push(ctx.sprite(L.src, { track: L.name, loop: L.loop, sound: L.sound, hidden: L.hidden, winIn: L.in, fx: L.fx, quad: L.quad,textSpans: L.type === 'text' ? (L.spans || []) : undefined, rectSpec: L.type === 'rect' ? { color: L.color, w: L.rectW, h: L.rectH } : undefined, spineSpec: L.type === 'spine' ? { anim: L.anim, loop: L.loop } : undefined, lightSpec: L.type === 'light' ? { inner: L.inner, feather: L.feather, edge: L.edge, rx: L.rx, ry: L.ry, color: L.color } : undefined, parent: pw || undefined }));
+          wraps.push(ctx.sprite(L.src, { track: L.name, loop: L.loop, sound: L.sound, hidden: L.hidden, winIn: L.in, fx: L.fx, quad: L.quad,textSpans: L.type === 'text' ? (L.spans || []) : undefined, alignX: L.alignX, alignMargin: L.alignMargin, rectSpec: L.type === 'rect' ? { color: L.color, w: L.rectW, h: L.rectH } : undefined, spineSpec: L.type === 'spine' ? { anim: L.anim, loop: L.loop } : undefined, lightSpec: L.type === 'light' ? { inner: L.inner, feather: L.feather, edge: L.edge, rx: L.rx, ry: L.ry, color: L.color } : undefined, parent: pw || undefined }));
         });
         await Promise.all(wraps.map(w => w.ready));
         return wraps;
@@ -766,7 +773,7 @@
     /** 编辑器用：应用/清除四角变形（q = 8 个角偏移或 null） */
     setQuad(name, q) { applyQuad(findTrack(name), q); },
     /** 图层管理（编辑器用）：在当前场景里新建/删除/改名/显隐/重排素材轨道 */
-    async addLayer(L) { if (!ctxNow) return null; const w = ctxNow.sprite(L.src, { track: L.name, loop: L.loop, hidden: L.hidden, textSpans: L.type === 'text' ? (L.spans || []) : undefined, rectSpec: L.type === 'rect' ? { color: L.color, w: L.rectW, h: L.rectH } : undefined, spineSpec: L.type === 'spine' ? { anim: L.anim, loop: L.loop } : undefined, lightSpec: L.type === 'light' ? { inner: L.inner, feather: L.feather, edge: L.edge, rx: L.rx, ry: L.ry, color: L.color } : undefined }); await w.ready; return { name: L.name, src: L.src, w: +w.dataset.w, h: +w.dataset.h, fit: +w.dataset.fit, pose: getPose(w), spineAnims: w._spine ? w._spine.anims : null, spineAnim: w._spine ? w._spine.anim : null, dur: (isAV(w.media) && isFinite(w.media.duration)) ? Math.round(w.media.duration * 1000) : (w._spine ? w._spine.dur : 0) }; },
+    async addLayer(L) { if (!ctxNow) return null; const w = ctxNow.sprite(L.src, { track: L.name, loop: L.loop, hidden: L.hidden, textSpans: L.type === 'text' ? (L.spans || []) : undefined, alignX: L.alignX, alignMargin: L.alignMargin, rectSpec: L.type === 'rect' ? { color: L.color, w: L.rectW, h: L.rectH } : undefined, spineSpec: L.type === 'spine' ? { anim: L.anim, loop: L.loop } : undefined, lightSpec: L.type === 'light' ? { inner: L.inner, feather: L.feather, edge: L.edge, rx: L.rx, ry: L.ry, color: L.color } : undefined }); await w.ready; return { name: L.name, src: L.src, w: +w.dataset.w, h: +w.dataset.h, fit: +w.dataset.fit, pose: getPose(w), spineAnims: w._spine ? w._spine.anims : null, spineAnim: w._spine ? w._spine.anim : null, dur: (isAV(w.media) && isFinite(w.media.duration)) ? Math.round(w.media.duration * 1000) : (w._spine ? w._spine.dur : 0) }; },
     removeLayer(name) { const w = findTrack(name); if (w) w.remove(); },
     renameLayer(from, to) { const w = findTrack(from); if (w) { w.dataset.track = to; w.trackName = to; } },
     setLayerHidden(name, b) { const w = findTrack(name); if (w) w.classList.toggle('hidden-layer', !!b); },

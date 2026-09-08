@@ -186,6 +186,7 @@
     <div class="row"><b>内部动效</b> <select id="fxType"></select> <button id="fxAdd" class="mini">＋ 添加</button><span class="hint">素材自身循环动画，叠加在关键帧运动/跟随之上</span></div>
     <div id="fxList"></div>
     <div class="row">跟随 <select id="followSel"></select><span class="hint">绑定后 x/y/s/r 都是父素材坐标系（x/y=父像素、s=相对父倍率），父怎么动子跟着动；切换时现有关键帧自动换算，画面不跳</span></div>
+    <div class="row" id="lockKidsWrap" hidden><label class="hint"><input type="checkbox" id="lockKids"> <b>调整时子层保持原位</b>（本层被 <span id="lockKidsN">0</span> 个子层跟随：勾选后拖动/缩放/旋转本层时，自动逐帧反向补偿子层关键帧，子层画面不动）</label></div>
   </div>
   <div class="blk">
     <div class="row"><b>关键帧</b><span class="hint" id="selInfo">当前素材</span><span class="sp"></span>t = <input id="kfT" type="number" step="100" min="0" style="width:80px"> <input id="kfName" type="text" style="width:80px" placeholder="名称(可选)"> <button id="kfAdd" class="mini" title="在播放头位置记录/更新关键帧（时间轴上双击空白处也可以）">＋ 记录</button></div>
@@ -386,7 +387,18 @@
 
   function enterEdit() {
     if (!api || !api.tracks) return;
-    if (q.get('lang')) { setSaveMsg('当前是翻译预览（' + q.get('lang') + '）：请先把语言切回「基准文案」再编辑，避免把翻译存进 tracks.js', 'err'); return; }
+    if (q.get('lang')) {   // 翻译预览态：可进「语言校准」模式（保存只写语言 JSON），或切回基准编辑
+      const lang = q.get('lang');
+      if (confirm('进入「' + lang + '」语言校准模式？\n\n可以拖动/缩放/四角变形调整文字层，保存时只把差异写进 i18n/' + lang + '.json（不改 tracks.js）。\n\n「取消」= 询问是否切回基准文案编辑。')) {
+        edit.langMode = lang;   // 进入校准：继续走正常编辑流程
+      } else {
+        if (!confirm('切回「基准文案」并进入普通编辑？')) { setSaveMsg('已取消', 'err'); return; }
+        q.delete('lang'); $('#lang').value = ''; history.replaceState(null, '', `?${q}`);
+        load();
+        (function waitApi(n) { if (api && api.tracks && api.current) return enterEdit(); if (n < 100) setTimeout(() => waitApi(n + 1), 200); })(0);
+        return;
+      }
+    } else edit.langMode = null;
     edit.on = true; document.body.classList.add('editing'); $('#edit').hidden = false; $('#tl').hidden = false; $('#editBtn').classList.add('on'); $('#hit').classList.add('on');
     api.pause(); api.setIdleEnabled(false); api.setEditing(true);
     edit.data = clone(api.tracksData); Object.keys(edit.data).forEach(k => edit.data[k] = normScene(edit.data[k]));
@@ -399,14 +411,14 @@
   function exitEdit(silent) {
     if (edit.on && edit.dirty && !silent && !confirm('有未保存的修改，仍然退出？（修改会留在本次预览里，刷新后丢失）')) return;
     stopPlay();
-    edit.on = false; exitEditTbox(); document.body.classList.remove('editing'); $('#edit').hidden = true; $('#tl').hidden = true; $('#editBtn').classList.remove('on'); $('#hit').classList.remove('on', 'drag');
+    edit.on = false; edit.langMode = null; exitEditTbox(); document.body.classList.remove('editing'); $('#edit').hidden = true; $('#tl').hidden = true; $('#editBtn').classList.remove('on'); $('#hit').classList.remove('on', 'drag');
     if (api) { api.setEditing(false); if (edit.data) api.setTracksData(edit.data); }
     applyScale(); requestAnimationFrame(applyScale);
   }
   function refreshTracks() {
     if (!edit.on || !api) return;
     stopPlay();
-    edit.scene = api.current; $('#editScene').textContent = edit.scene || '';
+    edit.scene = api.current; $('#editScene').textContent = (edit.scene || '') + (edit.langMode ? `（${edit.langMode} 校准 · 保存仅写语言覆盖）` : '');
     edit.tracks = api.tracks();
     edit.data[edit.scene] = normScene(edit.data[edit.scene]);
     const d = sd();
@@ -663,11 +675,29 @@
     else if (label) { kfs[i].label = label; edit.dirty = true; }
     return i;
   }
+  const childrenOf = name => (sd() ? sd().layers.filter(l => l.follow === name) : []);
+  /** 父层姿态改动后，把全部子层关键帧逐帧换算回补，使子层舞台画面保持不变 */
+  function compensateChildren(parentName, oldParentKfs) {
+    const newParentKfs = kfsOf(parentName);
+    for (const child of childrenOf(parentName)) {
+      const ckfs = kfsOf(child.name); if (!ckfs) continue;
+      for (const kf of ckfs) {
+        let st = relToStage({ r: 0, ...kf }, samplePose(oldParentKfs, kf.t));   // 旧父姿态下的舞台姿态
+        st = stageToRel(st, samplePose(newParentKfs, kf.t));                    // 换算进新父姿态
+        const rp = roundPose(st); Object.assign(kf, rp); if (rp.r == null) delete kf.r;
+      }
+      if (ckfs.length >= 2) api.scrub(child.name, ckfs, edit.time); else api.setPose(child.name, ckfs[0]);
+      api.dimTrack(child.name, outsideWin(child.name, edit.time));
+    }
+  }
   function updatePose(p, fromInput) {
     const kfs = curKfs(); if (!kfs) return;
+    const lockKids = $('#lockKids').checked && childrenOf(edit.track).length;
+    const oldParentKfs = lockKids ? kfs.map(k => ({ ...k })) : null;   // 补偿需要改动前的父关键帧快照
     const i = ensureKfAtTime();
     const rp = roundPose(p);
     Object.assign(kfs[i], rp); if (rp.r == null) delete kfs[i].r; if (rp.sy == null) delete kfs[i].sy; if (rp.o == null) delete kfs[i].o;   // 归零/等比/不透明时清掉字段
+    if (oldParentKfs) compensateChildren(edit.track, oldParentKfs);
     api.setPose(edit.track, kfs[i]); edit.dirty = true;
     api.dimTrack(edit.track, outsideWin(edit.track, edit.time));   // setPose 会清掉隐藏态，窗外的保持不显示
     renderPose(fromInput); renderKf(); renderTimeline();
@@ -807,6 +837,9 @@
     sel.innerHTML = '<option value="">无</option>' + cands.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
     sel.value = (L && L.follow) || '';
     sel.disabled = !L;
+    const kids = L ? childrenOf(edit.track).length : 0;   // 被跟随的父层：显示「子层保持原位」开关
+    $('#lockKidsWrap').hidden = !kids;
+    $('#lockKidsN').textContent = kids;
   }
   $('#followSel').addEventListener('change', () => toggleFollow($('#followSel').value || null));
 
@@ -1140,9 +1173,47 @@
 window.TRACKS = ${JSON.stringify(data, null, 2)};
 `;
   }
+  /** 语言校准保存：对当前场景每个文字层，取「编辑态 − 基准 tracks.js」的差异（首帧 dx/dy、缩放比、quad），
+   *  合并写进 i18n/<lang>.json 的对应条目（保留已有 lines 译文）。tracks.js 不动。 */
+  async function saveLangOverrides() {
+    const lang = edit.langMode;
+    try {
+      const srcTxt = await fetch(`/artifacts/${encodeURIComponent(project)}/src/tracks.js?_=${Date.now()}`).then(r => r.text());
+      const w = {}; new Function('window', srcTxt)(w);
+      const base = (w.TRACKS || {})[edit.scene] || { layers: [], keys: {} };
+      const dictPath = `artifacts/${project}/src/i18n/${lang}.json`;
+      const dict = await fetch('/' + dictPath + `?_=${Date.now()}`).then(r => r.json());
+      dict.tracks = dict.tracks || {}; const sect = dict.tracks[edit.scene] = dict.tracks[edit.scene] || {};
+      const d = sd(); let n = 0;
+      for (const L of d.layers) {
+        if (L.type !== 'text') continue;
+        const bL = base.layers.find(x => x.name === L.name); if (!bL) continue;
+        const k0 = (d.keys[L.name] || [])[0], b0 = (base.keys[L.name] || [])[0]; if (!k0 || !b0) continue;
+        const dx = +(k0.x - b0.x).toFixed(1), dy = +(k0.y - b0.y).toFixed(1), scale = +((k0.s || 1) / (b0.s || 1)).toFixed(4);
+        const quadDiff = JSON.stringify(L.quad || null) !== JSON.stringify(bL.quad || null);
+        const entry = sect[L.name], lines = Array.isArray(entry) ? entry : (entry && entry.lines);
+        const has = Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05 || Math.abs(scale - 1) > 0.001 || quadDiff;
+        if (!has) { if (entry && !Array.isArray(entry)) { if (lines) sect[L.name] = lines; else delete sect[L.name]; n++; } continue; }
+        const o = {};
+        if (lines) o.lines = lines;
+        if (Math.abs(dx) > 0.05) o.dx = dx;
+        if (Math.abs(dy) > 0.05) o.dy = dy;
+        if (Math.abs(scale - 1) > 0.001) o.scale = scale;
+        if (quadDiff && L.quad) o.quad = L.quad.map(v => +(+v).toFixed(1));
+        sect[L.name] = o; n++;
+      }
+      const r = await fetch('/__save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: dictPath, content: JSON.stringify(dict, null, 2) }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      edit.dirty = false;
+      setSaveMsg(`已保存 ${lang} 覆盖（${n} 个文字层）→ ${dictPath}`, 'ok');
+      exitEdit(true); load();   // 重载以干净重放该语言的覆盖
+    } catch (e) { setSaveMsg('保存语言覆盖失败：' + e.message, 'err'); }
+  }
   function setSaveMsg(msg, cls) { const el = $('#saveMsg'); el.textContent = msg; el.className = cls || ''; }
   $('#save').onclick = async () => {
     if (!edit.data) return;
+    if (edit.langMode) return saveLangOverrides();   // 语言校准：只写 i18n/<lang>.json
     const path = `artifacts/${project}/src/tracks.js`;
     try {
       // 防覆盖护栏：进入编辑后磁盘若被外部改过（多半是 agent），直接保存会把那些修改整体盖掉
