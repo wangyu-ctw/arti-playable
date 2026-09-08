@@ -115,6 +115,9 @@
   <b>Playable 预览台</b>
   <select id="proj"></select>
   <button id="reload" title="重新加载 (Shift+R)">↻ 重载</button>
+  <select id="lang" title="预览语言（i18n 项目有效）：非基准语言下禁止进入编辑，防止把翻译存回 tracks.js">
+    <option value="">基准文案</option><option value="en">en</option><option value="ja">ja</option><option value="zh-TW">zh-TW</option>
+  </select>
   <span class="sp"></span>
   <button id="restart" title="回到第一个场景">⏮ 重来</button>
   <button id="prev" title="上一场景">◀</button>
@@ -245,6 +248,8 @@
     sel.value = project;
   }
   $('#proj').onchange = e => { project = e.target.value; q.delete('s'); history.replaceState(null, '', `?p=${encodeURIComponent(project)}`); load(); };
+  $('#lang').value = q.get('lang') || '';
+  $('#lang').onchange = e => { const v = e.target.value; if (v) q.set('lang', v); else q.delete('lang'); history.replaceState(null, '', `?${q}`); load(); };
 
   // ---- 加载项目 ----
   function load() {
@@ -381,6 +386,7 @@
 
   function enterEdit() {
     if (!api || !api.tracks) return;
+    if (q.get('lang')) { setSaveMsg('当前是翻译预览（' + q.get('lang') + '）：请先把语言切回「基准文案」再编辑，避免把翻译存进 tracks.js', 'err'); return; }
     edit.on = true; document.body.classList.add('editing'); $('#edit').hidden = false; $('#tl').hidden = false; $('#editBtn').classList.add('on'); $('#hit').classList.add('on');
     api.pause(); api.setIdleEnabled(false); api.setEditing(true);
     edit.data = clone(api.tracksData); Object.keys(edit.data).forEach(k => edit.data[k] = normScene(edit.data[k]));
