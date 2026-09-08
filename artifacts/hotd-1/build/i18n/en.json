@@ -5,8 +5,8 @@
     },
     "s02": {
       "text": ["Choose your route"],
-      "text_up": ["Go upstairs", "Search for survivors"],
-      "text_down": ["Escape", "Break through the exit"],
+      "text_up": ["Go upstairs", { "text": "Search for survivors", "size": 26 }],
+      "text_down": { "dx": -150, "lines": ["Escape", { "text": "Break for the exit", "size": 24 }] },
       "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
     },
     "s03": {

@@ -115,7 +115,10 @@
   function sizeTextTrack(wrap) {
     const m = wrap.media;
     m.style.width = 'max-content'; m.style.height = 'auto';   // 量尺时取消 .track-media 的 100% 宽高
-    const w = Math.max(2, m.offsetWidth), h = Math.max(2, m.offsetHeight);
+    // 亚像素宽向上取整：offsetWidth 截断会让恰好等宽的行（西文常见）差 0.x px 而折行；
+    // 不能用 getBoundingClientRect（会被父层 transform 缩放污染），computed style 是布局像素
+    const cs = getComputedStyle(m);
+    const w = Math.max(2, Math.ceil(parseFloat(cs.width) || m.offsetWidth)), h = Math.max(2, Math.ceil(parseFloat(cs.height) || m.offsetHeight));
     m.style.width = '100%'; m.style.height = '100%';
     sizeTrack(wrap, w, h);
   }
