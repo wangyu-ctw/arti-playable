@@ -1,0 +1,52 @@
+m.webp
+size:912,398
+filter:Linear,Linear
+arm_L 1
+bounds:554,2,91,142
+arm_L 2
+bounds:787,131,61,107
+arm_L 3
+bounds:714,340,47,37
+arm_R 1
+bounds:787,2,102,125
+arm_R 2
+bounds:554,148,95,80
+rotate:90
+arm_R 3
+bounds:601,340,59,48
+offsets:0,0,60,49
+body
+bounds:152,2,148,304
+hair_L
+bounds:516,340,81,48
+offsets:0,0,82,48
+hand_L 1 1
+bounds:852,131,58,98
+hand_R 1 1
+bounds:664,340,44,46
+offsets:0,0,45,46
+rotate:90
+hand_R 1 2
+bounds:649,145,76,101
+offsets:0,0,77,102
+head
+bounds:649,2,134,139
+jacket_L
+bounds:152,310,72,266
+rotate:90
+jacket_R
+bounds:554,250,86,267
+rotate:90
+jacket_neck
+bounds:852,233,80,57
+rotate:90
+leg_L
+bounds:2,2,146,394
+leg_R
+bounds:456,2,94,302
+shoes_L
+bounds:825,317,65,85
+rotate:90
+shoes_R
+bounds:456,308,56,73
+offsets:0,0,57,73
