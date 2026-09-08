@@ -1,0 +1,32 @@
+{
+  "tracks": {
+    "s01": {
+      "text": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+    },
+    "s02": {
+      "text": ["Choose your route"],
+      "text_up": ["Go upstairs", "Search for survivors"],
+      "text_down": ["Escape", "Break through the exit"],
+      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+    },
+    "s03": {
+      "救救我": ["HELP!"],
+      "有人吗": ["Anyone?"],
+      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+    },
+    "s04": {
+      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+    },
+    "s05": {
+      "text": ["The TV anime \"HOTD\"", "is now a game, 15 years later!"],
+      "text_2": ["\"They\" are coming——"],
+      "text_3": ["A survival tower defense game", "set at the dawn of hell."],
+      "text_4": ["Start now and get"],
+      "text_5": ["about ¥90,000 worth", "of items for free!"],
+      "text_6": ["Play Now!"],
+      "text_7": ["\"They\" are attacking!", "Survive this hell!"],
+      "text_8": ["Tap to open the door"],
+      "notice": ["*This 3D footage is an advertising visualization and does not represent actual in-game content."]
+    }
+  }
+}
