@@ -1,0 +1,5 @@
+# 源码仓 arti-playable-origin（私有）专属忽略规则 —— 由 utils/repo/setup.sh 装到 .git-origin/info/exclude
+# 入库：utils/、artifacts/*/src、assets、originals、PLAYABLE_BRIEF.md、README.md
+# 打包产物不进源码仓（在公开的 arti-playable）
+/artifacts/*/build/
+/artifacts/*/compress-*/

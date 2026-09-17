@@ -1,0 +1,5 @@
+#!/bin/sh
+# 源码仓（arti-playable-origin，私有）的 git 入口：utils/gito status | add -A | commit -m … | push
+# 与打包产物仓共用同一工作区，只是 git 目录换成 .git-origin。可加别名：alias gito="$PWD/utils/gito"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec git --git-dir="$ROOT/.git-origin" --work-tree="$ROOT" "$@"

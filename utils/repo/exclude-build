@@ -1,0 +1,11 @@
+# 打包产物仓 arti-playable（公开）专属忽略规则 —— 由 utils/repo/setup.sh 装到 .git/info/exclude
+# artifacts：只入库各项目的打包产物 build/ 与 compress-*/ 镜像；源码 src/、素材 assets/、原片 originals/ 在私有源码仓
+/artifacts/**
+!/artifacts/*/
+!/artifacts/*/build/
+!/artifacts/*/build/**
+!/artifacts/*/compress-*/
+!/artifacts/*/compress-*/**
+# 渠道上传包（单文件 html + zip，每次重打约 25MB 整体变化）默认不进库，避免历史膨胀；
+# 要入库就删掉下面这行并重跑 utils/repo/setup.sh
+/artifacts/*/build/single/

@@ -201,8 +201,12 @@
   const isSpineSrc = src => /\.(json|skel)(\?|$)/i.test(src || '');
   const isAudioSrc = src => /\.(mp3|m4a|aac|wav|ogg)(\?|$)/i.test(src || '');
   const isAV = el => !!el && (el.tagName === 'VIDEO' || el.tagName === 'AUDIO');   // 音频轨与视频轨同语义
+  const START_GRACE_MS = 1000;   // gameReady 之后等容器调 gameStart 的时长，超过则自行开播
+  // 资源解析：单文件打包时 build 注入 window.__ASSETS = { 'assets/x.mp4': 'data:…' }，运行时把路径换成内联数据；否则原路径
+  const A = p => (window.__ASSETS && p && window.__ASSETS[p]) || p;
   const preloaded = new Set();
   function preloadScene(id) {
+    if (window.__ASSETS) return;   // 单文件内联：资源已在页面里，无需预取
     const sc = scenes.get(id); if (!sc || preloaded.has(id)) return; preloaded.add(id);
     const srcs = [...sceneData(id).layers.map(L => L.src), ...(sc.preload || [])].filter(Boolean);   // layers + 场景自声明的 preload（文字层无 src）
     srcs.forEach(src => {
@@ -220,6 +224,25 @@
     if (srcs.length) emit({ type: 'preload', id, count: srcs.length });
   }
   preloadScene._keep = [];   // 持有引用，防止被 GC 后重新下载
+
+  /** 全部场景素材就绪（渠道 gameReady 的前置）：图片解码、视频/音频可播、Spine 骨架解析、字体就绪。
+   *  单个素材 8s 超时兜底、出错不阻塞——宁可带着缺口开播也不能卡死在加载。文件夹/单文件两种模式通用（A() 解析）。 */
+  function preloadAll() {
+    const srcs = new Set();
+    for (const id of order) { const sc = scenes.get(id); [...sceneData(id).layers.map(L => L.src), ...((sc && sc.preload) || [])].filter(Boolean).forEach(s => srcs.add(s)); }
+    if (document.body.dataset.bg) srcs.add(document.body.dataset.bg);   // 页面底图也算就绪条件
+    const settle = (p, ms = 8000) => Promise.race([p, new Promise(r => setTimeout(r, ms))]).catch(() => {});
+    const isAudioLike = s => /\.(mp3|m4a|aac|wav|ogg)(\?.*)?$/i.test(s);
+    const jobs = [...srcs].map(src => {
+      if (isVideoSrc(src) || isAudioLike(src)) return settle(new Promise(res => { const m = document.createElement(isVideoSrc(src) ? 'video' : 'audio'); m.preload = 'auto'; m.muted = true; m.oncanplaythrough = m.onloadeddata = m.onerror = res; m.src = A(src); preloadScene._keep.push(m); }));
+      if (isSpineSrc(src)) return window.spine ? settle(spineLoad(src)) : Promise.resolve();
+      const i = new Image(); i.src = A(src); preloadScene._keep.push(i);
+      return settle(i.decode ? i.decode() : new Promise(res => { i.onload = i.onerror = res; }));
+    });
+    if (document.fonts && document.fonts.ready) jobs.push(settle(document.fonts.ready, 3000));
+    emit({ type: 'preloadAll', count: srcs.size });
+    return Promise.all(jobs);
+  }
 
   // ---------- Spine 骨骼图层（vendor/spine-webgl.min.js，全局 spine，版本需与导出一致） ----------
   // 全页共享一个离屏 WebGL 画布（浏览器 WebGL 上下文有 ~16 个的上限，逐层建上下文撑不起一群）：
@@ -239,6 +262,7 @@
       const base = src.slice(0, src.lastIndexOf('/') + 1), file = src.slice(src.lastIndexOf('/') + 1);
       const stem = file.replace(/\.(json|skel)$/i, ''), isBin = /\.skel$/i.test(file);
       const assets = new spine.AssetManager(sh.glc, base);
+      if (window.__ASSETS) for (const [k, v] of Object.entries(window.__ASSETS)) if (k.startsWith(base)) assets.setRawDataURI(k.slice(base.length), v);
       if (isBin) assets.loadBinary(file); else assets.loadText(file);
       assets.loadTextureAtlas(stem + '.atlas');
       await assets.loadAll();
@@ -342,14 +366,14 @@
       video(src, opts = {}) {
         const v = document.createElement('video');
         v.className = `media fit-${opts.fit || 'contain'} ${opts.cls || ''}`;
-        v.src = src; v.muted = true; v.controls = false; v.playsInline = true; v.setAttribute('playsinline', ''); v.autoplay = true; v.loop = !!opts.loop; v.preload = 'auto';
+        v.src = A(src); v.muted = true; v.controls = false; v.playsInline = true; v.setAttribute('playsinline', ''); v.autoplay = true; v.loop = !!opts.loop; v.preload = 'auto';
         root.appendChild(v);
         if (opts.sound) enableSound(v);   // 解锁声音后播放本视频自己的音轨（静音起播保证自动播放合规）
         v.play().catch(err => emit({ type: 'warn', msg: `video 自动播放失败 ${src}: ${err && err.message}` }));
         return v;
       },
       /** 图片素材，默认 contain；opts: {fit, cls} */
-      image(src, opts = {}) { const i = document.createElement('img'); i.className = `media fit-${opts.fit || 'contain'} ${opts.cls || ''}`; i.src = src; i.alt = ''; root.appendChild(i); return i; },
+      image(src, opts = {}) { const i = document.createElement('img'); i.className = `media fit-${opts.fit || 'contain'} ${opts.cls || ''}`; i.src = A(src); i.alt = ''; root.appendChild(i); return i; },
       /**
        * 轨道素材（可在预览台编辑模式里拖动/缩放/记关键帧）。图或视频，按扩展名判断。
        * opts: {track: 轨道名(默认 t1,t2…), pose: 无关键帧数据时的初始姿态(默认 contain 适配), loop, hidden, cls}
@@ -375,11 +399,11 @@
         else if (isSpine) { m = document.createElement('canvas'); m.className = 'track-media track-spine'; wrap.dataset.type = 'spine'; }
         else if (isAudio) {   // 音频轨：与视频同语义（in 起播/out 暂停/时间轴联动），运行时不可见，永远走声音解锁门控
           m = document.createElement('audio'); m.className = 'track-media track-audio'; wrap.dataset.type = 'audio';
-          m.muted = true; m.loop = !!opts.loop; m.preload = 'auto'; enableSound(m); m.src = src;
+          m.muted = true; m.loop = !!opts.loop; m.preload = 'auto'; enableSound(m); m.src = A(src);
           const badge = document.createElement('div'); badge.className = 'audio-badge'; badge.textContent = '♪ ' + name;
           wrap.appendChild(badge);   // 仅编辑模式可见（CSS 控制）
         }
-        else { m = document.createElement(isVideo ? 'video' : 'img'); m.className = 'track-media'; if (isVideo) { m.muted = true; m.controls = false; m.playsInline = true; m.setAttribute('playsinline', ''); m.loop = !!opts.loop; m.preload = 'auto'; if (opts.sound) enableSound(m); } else m.alt = ''; m.src = src; }
+        else { m = document.createElement(isVideo ? 'video' : 'img'); m.className = 'track-media'; if (isVideo) { m.muted = true; m.controls = false; m.playsInline = true; m.setAttribute('playsinline', ''); m.loop = !!opts.loop; m.preload = 'auto'; if (opts.sound) enableSound(m); } else m.alt = ''; m.src = A(src); }
         wrap.appendChild(m); wrap.media = m; wrap.trackName = name;
         if (opts.fx && opts.fx.length) applyFx(wrap, opts.fx);
         sizeTrack(wrap, STAGE.w, STAGE.h); wrap.style.visibility = 'hidden'; wrap._winIn = opts.winIn > 0;
@@ -591,7 +615,7 @@
       showCTA(opts = {}) {
         if (!ctx.alive || ctx.ctaShown) return; ctx.ctaShown = true;
         const b = ctx.el('button', 'cta', opts.label || sc.ctaLabel || '立即体验');
-        b.onclick = () => { emit({ type: 'cta', id: sc.id }); if (opts.onClick) opts.onClick(); else if (opts.href || sc.ctaHref) window.open(opts.href || sc.ctaHref, '_blank'); };
+        b.onclick = () => { if (opts.onClick) opts.onClick(); else ctaGo(opts.href || sc.ctaHref); };
         return b;
       },
       /** 行为时钟：与场景时间轴同源的隐藏动画（duration 毫秒）；播放器暂停期间创建也会正确冻结/恢复 */
@@ -634,6 +658,23 @@
   function resume() { if (!paused) return; paused = false; stage.classList.remove('paused'); if (bgmEl) bgmEl.play().catch(() => {}); if (ctxNow) ctxNow.root.querySelectorAll('video,audio').forEach(v => { if (!v.dataset.waitStart && !v.ended) v.play().catch(() => {}); }); /* ended=定格中的视频不重播 */ stage.getAnimations({ subtree: true }).forEach(a => { if (a._pausedByPlayer) { a.play(); a._pausedByPlayer = false; } }); if (ctxNow) ctxNow.root.querySelectorAll('.track').forEach(w => { delete w._spineHold; }); /* 编辑器的 Spine 接管随恢复解除 */ rearmIdle(); emit({ type: 'resume' }); }
 
   // ---------- 对外 ----------
+  // ---------- 渠道接口（CTA 跳转 / 结束上报）----------
+  // Mintegral：window.install() 跳商店、window.gameEnd() 上报结束；MRAID 容器：mraid.open(href)；开发期：window.open
+  // 写法按 Mintegral 规范原文 `window.xxx && window.xxx()`——其检测工具可能同时做静态扫描，别改成 typeof 判断。
+  let gameEnded = false;
+  function ctaGo(href) {
+    emit({ type: 'cta', href: href || '' });
+    gameEnd();   // 点 CTA 即试玩结束：gameEnd 必须先于 install（检测工具通常在 install 时停止运行，之后的 gameEnd 不会被看到）
+    if (window.install) { window.install(); return; }
+    if (window.mraid && typeof window.mraid.open === 'function') return window.mraid.open(href);
+    if (href) window.open(href, '_blank');
+  }
+  function gameEnd() {
+    if (gameEnded) return; gameEnded = true;
+    emit({ type: 'gameEnd' });
+    try { window.gameEnd && window.gameEnd(); } catch (_) {}
+  }
+
   // ---------- 声音解锁（全局一次）与 BGM（跨场景单例）----------
   // 移动端规则：自动播放必须静音；用户任意一次真实点击后「解锁」——此后凡标记了发声的媒体（BGM、
   // sound:true 的视频）一律取消静音，跨场景保持解锁态。解锁监听用 window 捕获段 + passive：
@@ -677,7 +718,7 @@
   function sfxLoad(src) {
     if (sfxBufs.has(src)) return sfxBufs.get(src);
     const c = sfxCtx(); if (!c) return Promise.reject(new Error('no AudioContext'));
-    const p = fetch(src).then(r => r.arrayBuffer()).then(b => c.decodeAudioData(b));
+    const p = fetch(A(src)).then(r => r.arrayBuffer()).then(b => c.decodeAudioData(b));
     sfxBufs.set(src, p); p.catch(() => sfxBufs.delete(src));
     return p;
   }
@@ -699,7 +740,7 @@
   function bgm(src, opts = {}) {
     if (bgmEl) return bgmEl;
     const a = document.createElement('audio');
-    a.src = src; a.loop = opts.loop !== false; a.autoplay = true;
+    a.src = A(src); a.loop = opts.loop !== false; a.autoplay = true;
     a.muted = !soundOn;   // 已解锁（如在 s01 点过）则直接带声起播
     if (opts.volume != null) a.volume = opts.volume;
     a.style.display = 'none';
@@ -712,6 +753,8 @@
   }
 
   window.Playable = {
+    /** CTA 跳转（渠道适配：Mintegral install() / MRAID open / 开发期 window.open）与结束上报 gameEnd()（只上报一次） */
+    cta: ctaGo, gameEnd,
     /** 循环 BGM：Playable.bgm('../assets/bgm.mp3', {volume}) —— 静音起播、首次点击解锁声音、跨场景持续、随播放器暂停/恢复 */
     bgm,
     /** 音效：Playable.sfx(src, {volume, durMs})，WebAudio 可重叠；未解锁声音时静默。Playable.sfx.preload(src) 预解码 */
@@ -746,9 +789,24 @@
     start(id) {
       stage = document.getElementById('stage');
       fitStage(); window.addEventListener('resize', fitStage);
+      if (document.body.dataset.bg) document.body.style.setProperty('--page-bg', `url("${A(document.body.dataset.bg)}")`);   // 宽屏两侧底图（styles.css body[data-bg]，仅宽视口生效）
       // 调试用：?s=<sceneId> 从指定场景启动（预览台会透传）；正式打包时地址里不会有这个参数
       const want = id || new URLSearchParams(location.search).get('s');
-      goto(scenes.has(want) ? want : order[0]);
+      const first = scenes.has(want) ? want : order[0];
+      // 渠道生命周期（Mintegral 等）：全部素材就绪 → window.gameReady()；容器若随即调 window.gameStart()（同步或 1s 内）就以它为开播时刻，
+      // 否则 1s 后自行开播——规范里 gameStart 只是"方便开发者"的可选钩子，检测工具/部分容器不会调，死等会黑屏。
+      // 没有 gameReady 的环境（开发服务、预览台、普通托管页）就绪后直接开播。gameStart 幂等；若早于就绪到达，则就绪后立即开播。
+      let started = false, startRequested = false, ready = false, graceTimer = null;
+      const begin = () => { if (started) return; started = true; clearTimeout(graceTimer); emit({ type: 'start', id: first }); goto(first); };
+      window.gameStart = () => { startRequested = true; emit({ type: 'gameStart' }); if (ready) begin(); };
+      window.gameClose = () => { emit({ type: 'gameClose' }); };   // 容器结束试玩时调（Mintegral 规范第 7 条）：按需求不做任何处理，只打点
+      preloadAll().then(() => {
+        ready = true; emit({ type: 'ready' });
+        const hasSdk = !!window.gameReady;
+        try { window.gameReady && window.gameReady(); } catch (_) {}
+        if (startRequested || !hasSdk) begin();
+        else graceTimer = setTimeout(begin, START_GRACE_MS);
+      });
     },
   };
 

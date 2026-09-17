@@ -6,6 +6,12 @@
   --font: -apple-system, "PingFang SC", "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
 }
 html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: var(--font); -webkit-tap-highlight-color: transparent; }
+/* 视口比舞台宽时两侧露出的页面底图：index.html 写 <body data-bg="../assets/xx.webp">，player 启动时设 --page-bg（单文件打包自动内联）。
+   底图按 9:16 竖图设计：高度撑满、横向平铺、居中——中间一块正好被舞台盖住，左右各露出一块。
+   只在视口宽高比 ≥ 舞台时生效；更高的竖屏（舞台上下留黑）不铺，避免底图从上下露出 */
+@media (min-aspect-ratio: 750/1334) {
+  body[data-bg] { background: #000 var(--page-bg, none) center top / auto 100% repeat-x; }
+}
 #stage {
   position: absolute; left: 50%; top: 50%;
   width: var(--stage-w); height: var(--stage-h);
