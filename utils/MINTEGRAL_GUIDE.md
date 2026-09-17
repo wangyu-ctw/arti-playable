@@ -9,7 +9,7 @@
 | # | 要求 | 骨架如何满足 |
 |---|---|---|
 | 1 | HTML 结构：必须有 `<!DOCTYPE html>` / html / head / body，`<meta charset="utf-8">`；推荐 viewport `width=device-width,user-scalable=no,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0` | 模板 `index.html` 已按此写；build 时统一大写 DOCTYPE、按 `--lang` 烙 `<html lang>`，缺项打 ⚠️ |
-| 2 | 上传 **zip**，根目录必须有 `index.html`；全部资源内联、**零外部网络请求**；≤ 5MB（建议 ≤ 3MB） | `build.mjs --single` 产出全内联单文件 + 同名 zip（zip 里只有一个 `index.html`） |
+| 2 | 上传 **zip**，根目录必须有 `index.html`；全部资源内联、**零外部网络请求**；≤ 5MB（建议 ≤ 3MB） | `build.mjs --single` 产出 zip（里面只有一个全内联的 `index.html`） |
 | 3 | 结束时（出结束画面）必须调 `window.gameEnd && window.gameEnd()` | `Playable.gameEnd()`：只报一次；cta-link 行为按标签帧上报；点 CTA 时若未报会**先补报再 install** |
 | 4 | 资源加载完调 `window.gameReady && window.gameReady()` | `Playable.start()` 先 `preloadAll()`（图片解码 / 视频音频可播 / Spine 解析 / 字体，单项 8s 超时兜底）再调 |
 | 5 | 公开 `window.gameStart()`，容器开始展示时调 | 已公开；gameReady 后等它最多 **1s**，没等到自行开播（检测工具不一定调） |
@@ -42,17 +42,17 @@
 ## 4. 打包与产物
 
 ```bash
-node utils/build.mjs <项目> --single --lang ja     # → artifacts/<项目>/build/single/<项目>-ja.zip（上传）+ 同名 .html（双击预览）
+node utils/build.mjs <项目> --single --lang ja     # → artifacts/<项目>/build/single/<项目>-ja.zip（直接上传）
 node utils/build.mjs <项目> --single --lang en
 node utils/build.mjs <项目> --single --lang zh-TW
 node utils/build.mjs <项目>                        # 文件夹模式 → build/（index.html + assets/ + i18n/），托管用；不会清掉 build/single/
 ```
 
-看日志：`内联资源 N 个（原始 X → base64 约 Y）；未被引用未打入：…`（确认该进的都进了、不该进的没进）、`单文件：Z MB`（> 5MB ⚠️、> 3MB ℹ️）、`上传包：… .zip`、`⚠️ 结构检查：缺少 …`。
+看日志：`内联资源 N 个（原始 X → base64 约 Y）；未被引用未打入：…`（确认该进的都进了、不该进的没进）、`index.html（全内联，解压后体积）：Z MB`（> 5MB ⚠️、> 3MB ℹ️）、`上传包：… .zip`、`⚠️ 结构检查：缺少 …`。
 
 ## 5. 验证方法
 
-**本地预览**：双击 `build/single/<项目>-ja.html`（`file://` 直接能跑，说明零网络依赖）。DevTools Network 里除 document 外不应有任何请求。
+**本地预览**：解压 zip 后双击 `index.html`（`file://` 直接能跑，说明零网络依赖）。DevTools Network 里除 document 外不应有任何请求。
 
 **模拟容器**：预览页控制台先粘这段再刷新（或放进检测前的 stub 页）：
 

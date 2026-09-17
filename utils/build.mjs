@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-/* 打包构建：node utils/build.mjs <projectname> [--single] [--lang ja] [--out 文件名]
+/* 打包构建：node utils/build.mjs <projectname> [--single] [--lang ja] [--out zip名]
  *
  * 默认（文件夹模式）→ artifacts/<p>/build/：
  *   index.html（src/index.html 引用的 CSS/JS 压缩内联）+ assets/ 整目录 + i18n/*.json；
  *   ../assets/ 改写为 assets/，被引用资源加内容指纹 ?v=hash（spine/ 除外）。可托管到任意静态服务。
  *
- * --single（单文件模式，Mintegral 等"全内联、零网络请求"渠道）→ artifacts/<p>/build/single/<p>-<lang>.html + 同名 .zip（根目录 index.html，上传用）：
+ * --single（渠道上传包，Mintegral 等"全内联、零网络请求"渠道）→ artifacts/<p>/build/single/<p>-<lang>.zip（根目录一个全内联 index.html）：
  *   在文件夹模式基础上，把被引用的全部资源（视频/图/音频/Spine 三件套）转成 data URI 注入 window.__ASSETS，
  *   运行时 player 通过解析器把路径换成内联数据（Spine 走 setRawDataURI）；不加指纹、不拷 assets。
  *   --lang ja：把该语言字典（含 en 回落）编译期内联为 window.__I18N_INLINE，运行时不 fetch、不看 URL 参数。
@@ -24,7 +24,7 @@ const esbuild = require('esbuild');
 
 const args = process.argv.slice(2);
 const proj = args.find(a => !a.startsWith('--'));
-if (!proj) { console.error('用法：node utils/build.mjs <projectname> [--single] [--lang ja] [--out 文件名]'); process.exit(1); }
+if (!proj) { console.error('用法：node utils/build.mjs <projectname> [--single] [--lang ja] [--out zip名]'); process.exit(1); }
 const opt = name => { const i = args.indexOf('--' + name); return i >= 0 ? (args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : true) : null; };
 const SINGLE = !!opt('single');
 const LANG = typeof opt('lang') === 'string' ? opt('lang') : (SINGLE ? 'en' : null);
@@ -126,23 +126,19 @@ if (!SINGLE) {
   if (!/<body\b[^>]*>/.test(html)) { console.error('找不到 <body> 开标签，无法注入资源表'); process.exit(1); }
   html = html.replace(/<body\b[^>]*>/, m => m + assetsScript);   // 资源表紧跟 body 开标签（可带属性，如 data-bg），须在 player 之前
   const outDir = join(out, 'single'); mkdirSync(outDir, { recursive: true });
-  const name = OUT_NAME || `${proj}-${LANG}.html`;
-  const outFile = join(outDir, name);
-  writeFileSync(outFile, html);
-  const size = statSync(outFile).size;
-  console.log(`  内联资源 ${referenced.size} 个（原始 ${(rawBytes / 1048576).toFixed(2)}MB → base64 约 ${(rawBytes * 4 / 3 / 1048576).toFixed(2)}MB）${unused.length ? `；未被引用未打入：${unused.join(', ')}` : ''}`);
-  console.log(`\n单文件：${(size / 1048576).toFixed(2)}MB → artifacts/${proj}/build/single/${name}`);
-  if (size > 5 * 1048576) console.warn('⚠️ 超过 5MB（Mintegral 硬上限），请先压缩视频');
-  else if (size > 3 * 1048576) console.warn('ℹ️ 超过 3MB（Mintegral 建议值），可考虑再压视频');
-  if (html.includes('../assets/')) console.warn('⚠️ 仍有未改写的 ../assets/ 引用，请检查');
-  // 渠道上传包：zip 根目录只有一个 index.html（即上面的单文件）。Mintegral 要求 zip 且根目录含 index.html、无外部请求；
-  // 单文件已全内联，所以 zip 里不需要任何其它文件。base64 文本经 deflate 会压回接近素材原始体积。
-  const zipName = name.replace(/\.html?$/i, '') + '.zip';
+  const zipName = (OUT_NAME || `${proj}-${LANG}`).replace(/\.(zip|html?)$/i, '') + '.zip';
+  // 只产出 zip（根目录一个全内联的 index.html）：HTML 在临时目录生成、打包后即删，不留散落的单文件
   const tmp = join(outDir, '.zip-tmp'); rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
-  copyFileSync(outFile, join(tmp, 'index.html'));
+  writeFileSync(join(tmp, 'index.html'), html);
+  const size = Buffer.byteLength(html);
+  console.log(`  内联资源 ${referenced.size} 个（原始 ${(rawBytes / 1048576).toFixed(2)}MB → base64 约 ${(rawBytes * 4 / 3 / 1048576).toFixed(2)}MB）${unused.length ? `；未被引用未打入：${unused.join(', ')}` : ''}`);
+  console.log(`  index.html（全内联，解压后体积）：${(size / 1048576).toFixed(2)}MB`);
+  if (size > 5 * 1048576) console.warn('⚠️ 解压后超过 5MB（Mintegral 硬上限），请先压缩素材');
+  else if (size > 3 * 1048576) console.warn('ℹ️ 解压后超过 3MB（Mintegral 建议值），可考虑再压素材');
+  if (html.includes('../assets/')) console.warn('⚠️ 仍有未改写的 ../assets/ 引用，请检查');
   rmSync(join(outDir, zipName), { force: true });
   const z = spawnSync('zip', ['-q', '-X', '-9', join(outDir, zipName), 'index.html'], { cwd: tmp, stdio: 'inherit' });
   rmSync(tmp, { recursive: true, force: true });
-  if (z.status !== 0) console.warn('⚠️ zip 失败（缺少 zip 命令？），只产出了 .html');
-  else console.log(`上传包：${(statSync(join(outDir, zipName)).size / 1048576).toFixed(2)}MB → artifacts/${proj}/build/single/${zipName}（内含 index.html）`);
+  if (z.status !== 0) { console.error('zip 失败（缺少 zip 命令？）'); process.exit(1); }
+  console.log(`\n上传包：${(statSync(join(outDir, zipName)).size / 1048576).toFixed(2)}MB → artifacts/${proj}/build/single/${zipName}（根目录 index.html）`);
 }

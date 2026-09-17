@@ -14,7 +14,7 @@ open http://localhost:8080/utils/preview.html?p=hotd-1
 # 打包构建：生成 artifacts/hotd-1/build/ = index.html（全部 CSS/JS 压缩内联）+ assets/ + i18n/
 node utils/build.mjs hotd-1
 
-# Mintegral 上传包（全部素材 base64 内联、零网络请求、按语言各出一份）→ build/single/hotd-1-ja.zip（根目录 index.html）+ 同名 .html 预览用
+# Mintegral 上传包（全部素材 base64 内联进一个 index.html、零网络请求、按语言各出一份）→ build/single/hotd-1-ja.zip；预览：解压后双击 index.html
 node utils/build.mjs hotd-1 --single --lang ja      # --lang 可选 en / ja / zh-TW，不传为 en
 # 渠道生命周期（Mintegral）：素材全部就绪 → window.gameReady()；容器调 window.gameStart() 才开播（无 SDK 的环境直接开播）；
 #   结束画面出现时调一次 window.gameEnd()；CTA 调 window.install()（无则 mraid.open → window.open）；公开 window.gameClose()（空实现）。

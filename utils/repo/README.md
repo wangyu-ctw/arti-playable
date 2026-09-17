@@ -37,4 +37,4 @@ node utils/build.mjs hotd-1            # 打包 → build/
 git add -A && git commit -m "hotd-1：xxx 打包" && git push
 ```
 
-`build/single/`（渠道上传包）默认两边都不入库：产物仓嫌它每次重打 ~25MB 全变；要留档就删掉 `exclude-build` 里那行再跑 `setup.sh`。
+`build/single/`（渠道上传包 zip）默认两边都不入库：产物仓嫌它每次重打 ~10MB 全变；要留档就删掉 `exclude-build` 里那行再跑 `setup.sh`。
